@@ -1,0 +1,33 @@
+-M*\ddot{x}_m*\dot{x}_m**2/(2*(\dot{x}_m**2 + \dot{y}_m**2)**(3/2)) + M*\ddot{x}_m/(2*sqrt(\dot{x}_m**2 + \dot{y}_m**2)) - M*\ddot{y}_m*\dot{x}_m*\dot{y}_m/(2*(\dot{x}_m**2 + \dot{y}_m**2)**(3/2)) + kx_m*xm  \\ 
+
+-M*\ddot{x}_m*\dot{x}_m*\dot{y}_m/(2*(\dot{x}_m**2 + \dot{y}_m**2)**(3/2)) - M*\ddot{y}_m*\dot{y}_m**2/(2*(\dot{x}_m**2 + \dot{y}_m**2)**(3/2)) + M*\ddot{y}_m/(2*sqrt(\dot{x}_m**2 + \dot{y}_m**2)) + M*g + ky_m*ym  \\ 
+
+-\ddot{x}_0*\dot{x}_0**2*m_0/(2*(\dot{x}_0**2 + \dot{y}_0**2)**(3/2)) + \ddot{x}_0*m_0/(2*sqrt(\dot{x}_0**2 + \dot{y}_0**2)) - \ddot{y}_0*\dot{x}_0*\dot{y}_0*m_0/(2*(\dot{x}_0**2 + \dot{y}_0**2)**(3/2)) + \dot{x}_0*c_0 + kx_0*x_0  \\ 
+
+-\ddot{x}_0*\dot{x}_0*\dot{y}_0*m_0/(2*(\dot{x}_0**2 + \dot{y}_0**2)**(3/2)) - \ddot{y}_0*\dot{y}_0**2*m_0/(2*(\dot{x}_0**2 + \dot{y}_0**2)**(3/2)) + \ddot{y}_0*m_0/(2*sqrt(\dot{x}_0**2 + \dot{y}_0**2)) + g*m_0 + 1.0*ky_0*y_0 - 500.0*ky_0  \\ 
+
+I_0*\ddot{theta}_0 + kr_0*(theta_0 - theta_1)  \\ 
+
+-\ddot{x}_1*\dot{x}_1**2*m_1/(2*(\dot{x}_1**2 + \dot{y}_1**2)**(3/2)) + \ddot{x}_1*m_1/(2*sqrt(\dot{x}_1**2 + \dot{y}_1**2)) - \ddot{y}_1*\dot{x}_1*\dot{y}_1*m_1/(2*(\dot{x}_1**2 + \dot{y}_1**2)**(3/2)) + \dot{x}_1*c_1 + kx_1*x_1  \\ 
+
+-\ddot{x}_1*\dot{x}_1*\dot{y}_1*m_1/(2*(\dot{x}_1**2 + \dot{y}_1**2)**(3/2)) - \ddot{y}_1*\dot{y}_1**2*m_1/(2*(\dot{x}_1**2 + \dot{y}_1**2)**(3/2)) + \ddot{y}_1*m_1/(2*sqrt(\dot{x}_1**2 + \dot{y}_1**2)) + g*m_1 + 1.0*ky_1*y_1 - 1500.0*ky_1  \\ 
+
+I_1*\ddot{theta}_1 - kr_0*(theta_0 - theta_1) + kr_1*(theta_1 - theta_2)  \\ 
+
+-\ddot{x}_2*\dot{x}_2**2*m_2/(2*(\dot{x}_2**2 + \dot{y}_2**2)**(3/2)) + \ddot{x}_2*m_2/(2*sqrt(\dot{x}_2**2 + \dot{y}_2**2)) - \ddot{y}_2*\dot{x}_2*\dot{y}_2*m_2/(2*(\dot{x}_2**2 + \dot{y}_2**2)**(3/2)) + \dot{x}_2*c_2 + kx_2*x_2  \\ 
+
+-\ddot{x}_2*\dot{x}_2*\dot{y}_2*m_2/(2*(\dot{x}_2**2 + \dot{y}_2**2)**(3/2)) - \ddot{y}_2*\dot{y}_2**2*m_2/(2*(\dot{x}_2**2 + \dot{y}_2**2)**(3/2)) + \ddot{y}_2*m_2/(2*sqrt(\dot{x}_2**2 + \dot{y}_2**2)) + g*m_2 + 1.0*ky_2*y_2 - 2500.0*ky_2  \\ 
+
+I_2*\ddot{theta}_2 - kr_1*(theta_1 - theta_2) + kr_2*(theta_2 - theta_3)  \\ 
+
+-\ddot{x}_3*\dot{x}_3**2*m_3/(2*(\dot{x}_3**2 + \dot{y}_3**2)**(3/2)) + \ddot{x}_3*m_3/(2*sqrt(\dot{x}_3**2 + \dot{y}_3**2)) - \ddot{y}_3*\dot{x}_3*\dot{y}_3*m_3/(2*(\dot{x}_3**2 + \dot{y}_3**2)**(3/2)) + \dot{x}_3*c_3 + kx_3*x_3  \\ 
+
+-\ddot{x}_3*\dot{x}_3*\dot{y}_3*m_3/(2*(\dot{x}_3**2 + \dot{y}_3**2)**(3/2)) - \ddot{y}_3*\dot{y}_3**2*m_3/(2*(\dot{x}_3**2 + \dot{y}_3**2)**(3/2)) + \ddot{y}_3*m_3/(2*sqrt(\dot{x}_3**2 + \dot{y}_3**2)) + g*m_3 + 1.0*ky_3*y_3 - 3500.0*ky_3  \\ 
+
+I_3*\ddot{theta}_3 - kr_2*(theta_2 - theta_3) + kr_3*(theta_3 - theta_4)  \\ 
+
+-\ddot{x}_4*\dot{x}_4**2*m_4/(2*(\dot{x}_4**2 + \dot{y}_4**2)**(3/2)) + \ddot{x}_4*m_4/(2*sqrt(\dot{x}_4**2 + \dot{y}_4**2)) - \ddot{y}_4*\dot{x}_4*\dot{y}_4*m_4/(2*(\dot{x}_4**2 + \dot{y}_4**2)**(3/2)) + \dot{x}_4*c_4 + kx_4*x_4  \\ 
+
+-\ddot{x}_4*\dot{x}_4*\dot{y}_4*m_4/(2*(\dot{x}_4**2 + \dot{y}_4**2)**(3/2)) - \ddot{y}_4*\dot{y}_4**2*m_4/(2*(\dot{x}_4**2 + \dot{y}_4**2)**(3/2)) + \ddot{y}_4*m_4/(2*sqrt(\dot{x}_4**2 + \dot{y}_4**2)) + g*m_4 + 1.0*ky_4*y_4 - 4500.0*ky_4  \\ 
+
+I_4*\ddot{theta}_4 - kr_3*(theta_3 - theta_4)

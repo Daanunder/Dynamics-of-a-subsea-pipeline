@@ -1,0 +1,36 @@
+# Pipe and system parameters
+self.t_pipe = 0.004 # m
+self.L = 5000 #m  
+self.D_pipe = 0.5 #m
+self.rho_steel = 7850
+self.rho_water = 1000
+self.total_mass =  np.pi*self.D_pipe*self.t_pipe*self.L*self.rho_steel              # [kg]
+self.I = 1/2*self.total_mass/self.L*self.D_pipe**2
+self.E = 210000
+self.EI = self.E*self.I
+self.g_eff = (self.rho_steel - self.rho_water)/self.rho_steel * 9.81
+self.total_kx = 16*self.EI/(self.L/2)**2 + 2*self.total_mass*self.g_eff/self.L    # [N/m] Structural Bending stifness + tension(/gravity) stiffness
+
+# Element parameters
+self.R = R
+self.r = self.L/self.R
+self.element_mass = self.total_mass/self.R
+self.kx = 0
+self.ky = 0
+self.kr = self.total_kx/self.R
+self.cx = 10000/self.R
+self.element_inertia = 1/2*self.element_mass*(self.D_pipe/2)**2
+
+self.point_mass_mass = 50*10**6
+self.ky_m = self.total_kx*10000
+self.kx_m = self.total_kx
+
+self.origin = [0, 0]
+self.initial_conditions = np.zeros((self.R,2))
+self.initial_conditions[0,0] = 3/100 * np.pi/180
+self.initial_conditions[0,1] = 3/10000 * np.pi/180
+
+
+## solver attributes
+self.t_start = 0
+self.t_end = 5

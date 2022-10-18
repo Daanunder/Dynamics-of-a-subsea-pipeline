@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 L = 5000
-EI = 10**9
+EI = 1e8
 rho = 7850
 A = .2
 
@@ -19,7 +19,7 @@ def plot_anal_sol():
     n = 1
     for a in ax.flatten():
         a.plot(x, np.sin(b(n)*x))
-        a.set_title(f"Mode {n}")
+        a.set_title(f"Mode {n}: f = {wn(n)/2/np.pi:.3}")
         n+=1
     
     plt.savefig("analytical_modal_response.png")

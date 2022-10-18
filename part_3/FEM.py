@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import scipy
 from matplotlib.animation import FuncAnimation
 from BeamMatrices import BeamMatricesJacket
+from analytical import *
 
 class ContinousBeam(object):
 
@@ -17,16 +18,17 @@ class ContinousBeam(object):
 
     def __init__(self):
         """Sets up basic parameters and matrices"""
-        
+        # analytical solution
+        self.analytical_omega = wn
 
         # Input parameters
         self.A = 0.2
-        self.rho_cable = 7850*self.A
+        self.rho_cable = 7850
 
         # Cable
                          # [kg/m]
-        self.EI_pipe = 1e14                 # [N.m2]
-        self.EA_pipe = 0                   # neglecting elongation
+        self.EI_pipe = 1e8                 # [N.m2]
+        self.EA_pipe = 0                   # neglecting elongatio
         #EA_pipe = 210000000 * A      # [N]
         self.top_cable = 0                 #  [m]
         self.base_cable = 5000             # [m]
@@ -42,31 +44,36 @@ class ContinousBeam(object):
         self.nT = len(self.T)
 
         # Define node coordinates
-        self.N_nodes = 41
+        self.N_nodes = 100
         self.NodeCoord = np.zeros((self.N_nodes, 2))
         self.NodeCoord[:, 0] = np.linspace(self.top_cable, self.base_cable, self.N_nodes)
 
         # assign DOF's to nodes
         self.nDof = 3*self.N_nodes              # 3 Degrees of freedom per node
+    
+        # Boundary conditions
+        # describe which DOF's are free and which are prescribed through the boundary conditions          # prescribed DOFs
+        self.prescribed_dofs = np.array([0,  1, self.nDof-3, self.nDof-2])
+        self.free_dofs = np.arange(0, self.nDof)       #  Initially set all DOF's as free DOf's
+        self.free_dofs = np.delete(self.free_dofs, self.prescribed_dofs)  # remove the fixed DOFs from the free DOFs array
 
         # Modal analysis
         self.plot_n_modes = 5
         self.modal_damping_ratio = 0.05
 
         # Numerical parameters
-        self.n_modes = 15
+        self.max_modes = self.N_nodes*3 - len(self.prescribed_dofs)
+        self.n_modes = self.max_modes
         self.q0 = np.zeros(2*self.n_modes)
-
-        # ---------------------------- Boundary Conditions ---------------------------#
-        # describe which DOF's are free and which are prescribed through the boundary conditions          # prescribed DOFs
-        self.prescribed_dofs = np.array([0,  1, self.nDof-3, self.nDof-2])
-        self.free_dofs = np.arange(0, self.nDof)       #  Initially set all DOF's as free DOf's
-        self.free_dofs = np.delete(self.free_dofs, self.prescribed_dofs)  # remove the fixed DOFs from the free DOFs array
+        
+        self.setup_system()
     
+    def setup_system(self):
         self.discretize_beam()
         self.setup_system_matrices()
         self.apply_boundary_conditions()
         self.setup_modal_matrix()
+        #self.setup_decoupled_system()
     
     def append_equation_to_latex(self, eq, fname="eoms_latex.txt"):
         with open(fname, "a") as f:
@@ -77,7 +84,7 @@ class ContinousBeam(object):
         #             NodeLeft    NodeRight          m         EA        EI
         self.N_elements = self.N_nodes - 1
         self.dx = (self.base_cable-self.top_cable)/self.N_elements
-        self.m_pipe = self.rho_cable*self.dx
+        self.m_pipe = self.rho_cable*self.dx*self.A
         self.Elements = np.zeros((self.N_elements, 5), dtype=np.int64)
         for idx in range(self.N_elements):
             self.Elements[idx, 0] = idx
@@ -151,7 +158,6 @@ class ContinousBeam(object):
         plt.spy(self.K)
         plt.title("Stiffness matrix")
         plt.show()
-
 
     
     def apply_boundary_conditions(self):
@@ -235,29 +241,68 @@ class ContinousBeam(object):
                 c = 'black'
                 plt.plot([DisplacedNode[0][NodeLeft], DisplacedNode[0][NodeRight]], 
                             [DisplacedNode[1][NodeLeft], DisplacedNode[1][NodeRight]], c=c)
-            plt.title("Mode "+str(iMode-self.first_mode+1)+": f = "+str(np.round(self.eigen_frequencies[iMode], 3))+" Hz")
+            
+            mode_str = str(iMode-self.first_mode+1)
+            title = f"Mode {mode_str}: f = {self.eigen_frequencies[iMode]:.3} Hz"
+            plt.title(title)
 
         # automatically fix subplot spacing
         plt.tight_layout()
         plt.show()
+    
+    def plot_single_mode(self, iMode):
+        if iMode < self.first_mode and iMode >= 0:
+            print("WARNING -- This mode will not show anything") 
+        
+        plt.figure()
+        shape = self.modal_shape[:, iMode]
 
-    def get_decoupled_system(self):
+        # Scale the mode such that maximum deformation is 10
+        MaxTranslationx = np.max(np.abs(shape[0::3]))
+
+        MaxTranslationy = np.max(np.abs(shape[1::3]))
+        if MaxTranslationx != 0:
+             shape[0::3] = shape[0::3]/MaxTranslationx*300
+        shape[1::3] = shape[1::3]/MaxTranslationy*300
+
+        # Get the deformed shape
+        DisplacedNode = ([i[0] for i in self.NodeCoord] + shape[0::3], [i[1] for i in self.NodeCoord] + shape[1::3])
+        for element in self.Elements:
+            NodeLeft = element[0]-1
+            NodeRight = element[1]-1
+            m = element[2]
+            EA = element[3]
+            EI = element[4]
+            c = 'black'
+            plt.plot([DisplacedNode[0][NodeLeft], DisplacedNode[0][NodeRight]], 
+                        [DisplacedNode[1][NodeLeft], DisplacedNode[1][NodeRight]], c=c)
+        if iMode >= 0:
+            mode_str = str(iMode - self.first_mode + 1)
+        else:
+            mode_str = str(len(shape) + iMode + 1)
+
+        title = f"Mode {mode_str}: f = {self.eigen_frequencies[iMode]:.3} Hz"
+        plt.title(title)
+
+    def setup_decoupled_system(self):
         # Compute Modal quantities and decouple the system
-        contributing_modes = slice(self.first_mode, self.n_modes+self.first_mode)
-        self.PHI = self.eigen_vectors[:,contributing_modes]
+        self.contributing_modes = slice(self.first_mode, min(self.n_modes+self.first_mode, self.max_modes))
+        self.PHI = self.eigen_vectors[:,self.contributing_modes]
+       
 
-        self.Mm = np.zeros(self.n_modes)
-        self.Km = np.zeros(self.n_modes)
-        self.Cm = np.zeros(self.n_modes)
+        available_modes = self.contributing_modes.stop - self.contributing_modes.start
+        self.Mm = np.zeros(available_modes)
+        self.Km = np.zeros(available_modes)
+        self.Cm = np.zeros(available_modes)
 
         # Compute your "self.n_modes" entries of the modal mass, stiffness and damping
-        for i in range(self.n_modes):
+        for i in range(available_modes):
             self.Mm[i] = self.PHI[:, i].T  @ self.M_FF @ self.PHI[:, i]
             self.Km[i] = self.PHI[:, i].T  @ self.K_FF @ self.PHI[:, i]
             self.Cm[i] = 2*self.modal_damping_ratio*np.sqrt(self.Mm[i]*self.Km[i])
-            print(f"Computing Mode: {i+1} \nMm = {Mm[i]:.3f}, Km = {Km[i]:.3f}, Cm = {Cm[i]:.3f}")
+            print(f"Computing Mode: {i+1} \nMm = {self.Mm[i]:.3f}, Km = {self.Km[i]:.3f}, Cm = {self.Cm[i]:.3f}")
 
-    def get_forcing(self):
+    def get_forcing(self, t):
         c_F = 20 #kN
         F = np.zeros(len(self.free_dofs))
         f = 1000* np.sin(np.arange(self.top_cable+self.dx, self.base_cable, self.dx)*np.pi/self.base_cable)
@@ -275,75 +320,32 @@ class ContinousBeam(object):
 
     # update function
     def qdot(t,q):
-        Um = q[0:nMode]                                 # first entries are the displacemnt
-        Vm = q[nMode:2*nMode]                           # second half is the velocity
+        Um = q[0:self.n_modes]                                 # first entries are the displacemnt
+        Vm = q[self.n_modes:2*self.n_modes]                           # second half is the velocity
         Am = ( self.get_forcing(t) - (self.Km * Um + self.Cm * Vm) ) / self.Mm      # compute the accelerations
         return np.append(Vm,Am)                         # return the velocity and accelerations
 
     # solving in time domain
     def get_solution_FEM(self):
-        self.solution = scipy.integrate.solve_ivp(fun=qdot,y0=self.q0,t_span=[self.T[0],self.T[-1]])
+        self.solution = scipy.integrate.solve_ivp(fun=self.qdot,y0=self.q0,t_span=[self.T[0],self.T[-1]])
         print('Solving done')
     
     
+    def plot_frequency_convergence(self, dx_range_start, dx_range_stop):
+        mode_list = [1,2,3,4,5]
+        analytical_freq = [self.analytical_omega(n)/2/np.pi for n in mode_list]
+    
+        # 20 - 50
+        dx_list = np.arange(dx_range_start, dx_range_stop)
+        errors = np.zeros((len(dx_list), len(analytical_freq)))
+        for j,dx in enumerate(dx_list):
+            self.N_nodes = int((self.base_cable-self.top_cable)/dx) + 1
+            self.setup_system()
+            numerical_freq = np.array([self.eigen_frequencies[i-1+self.first_mode] for i in mode_list])
+            errors[j] = np.abs(analytical_freq - numerical_freq)
+
+        self.convergence_errors = errors
+        
+        return self.convergence_errors
 
 
-#plt.figure()
-#plt.plot(np.linspace(0,1e3, len(q.y[0])),q.y[1])
-#
-#lent = len(q.t)
-#
-## back to dof
-## Show the result on the original coordinates
-#U_F = np.zeros((lent,len(PHI[:,0])))
-#for iMode in range(nMode):
-    #for it in range(lent):
-        #U_F[it,:] += PHI[:, iMode] * q.y[iMode][it]
-#print("Back to original DoF's done")
-#
-#
-#mask2 = np.nonzero(np.arange(0, len(U_F[0, :])-1, 1) % 3)
-#
-## xiu = U_F[1600, mask2]
-## print(xiu)
-## print(q.t[1600])
-## xiu = xiu[0, 1::2]
-## plt.figure()
-#
-## plt.plot(np.arange(len(xiu)), xiu)
-#
-#U = np.zeros((len(q.t), len(NodeCoord[1:-1].flatten())))
-#x = np.arange(0, len(U[0]), 2)
-#y = np.arange(1, len(U[1]), 2)
-#Ux = np.zeros((len(q.t), len(U[0])//2))
-#Uy = np.zeros((len(q.t),len(U[0])//2)) 
-#for t in range(len(q.t)):
-    #U[t,:] = U_F[t,mask2]+NodeCoord[1:-1].flatten()
-    ##print(U[t, :])
-    #Ux[t] = U[t, 0::2]
-    #Uy[t] = U[t, 1::2]
-#
-#
-## add BC:
-#BC1x = np.ones(len(q.t))*Top_cable
-#BC1y = np.zeros(len(q.t))
-#BC2x = np.ones(len(q.t))*Base_cable
-#BC2y = np.zeros(len(q.t))
-#Ux = np.insert(Ux, 0, BC1x, axis=1)
-#Uy = np.insert(Uy, 0, BC1y, axis=1)
-#Ux = np.insert(Ux, N_nodes-1, BC2x, axis=1)
-#Uy = np.insert(Uy, N_nodes-1, BC2y, axis=1)
-#plt.figure()
-#plt.plot(Ux[20], Uy[20])
-#
-#fig = plt.figure()
-#
-#def animate(i):
-    #plt.cla()
-    #plt.title(f"Time is {q.t[i*100]:.1f} s")
-    #plt.plot(Ux[i*100], Uy[i*100])
-    #plt.ylim(-1, 1)
-#
-#anim = FuncAnimation(fig, animate, frames=len(q.t)//100,interval=1, repeat=False)
-#
-plt.show()

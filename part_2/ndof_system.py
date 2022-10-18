@@ -58,7 +58,7 @@ class NDOF_system(object):
         ## solver attributes
         self.matrix_size = self.R*3+2
         self.t_start = 0
-        self.t_end = 1000
+        self.t_end = 400
         self.dt = 0.1
 
         self.t_eval = np.arange(self.t_start, self.t_end, self.dt)
@@ -223,17 +223,17 @@ class NDOF_system(object):
             ## substitute mass derivatives
             xm, ym = self.point_mass[0]["vars"]
             xm_d, xm_dd, ym_d, ym_dd = sp.symbols("x_m_d x_m_dd y_m_d y_m_dd")
+            xm_sym, ym_sym = sp.symbols("x_m y_m")
             if print_latex:
                 xm_d, xm_dd, ym_d, ym_dd = sp.symbols("\\dot{x}_m \\ddot{x}_m \\dot{y}_m \\ddot{y}_m")
             if j == 0:
                 self.all_accelerations.extend([xm_dd, ym_dd])
                 self.all_velocities.extend([xm_d,ym_d])
-                self.all_positions.extend([xm,ym])
+                self.all_positions.extend([xm_sym,ym_sym])
 
             eq = eq.subs([(xm(t).diff((t,2)), xm_dd), (ym(t).diff((t,2)), ym_dd)])
             eq = eq.subs([(xm(t).diff(t), xm_d),  (ym(t).diff(t), ym_d)])
 
-            xm_sym, ym_sym = sp.symbols("x_m y_m")
             eq = eq.subs([(xm(t), xm_sym), (ym(t), ym_sym)])
 
             self.point_mass[0]["symbols"] = {"x": [xm_sym, xm_d, xm_dd], "y":[ym_sym, ym_d, ym_dd]}
@@ -350,44 +350,88 @@ class NDOF_system(object):
         for pos in self.all_positions:
             lin_origin[pos] = sp.symbols(str(pos)+"_0")
 
+        new_var = dict()
+        for acc in self.all_accelerations:
+            new_var[acc] = sp.symbols(str(acc)+"#")
+        for vel in self.all_velocities:
+            new_var[vel] = sp.symbols(str(vel)+"#")
+        for pos in self.all_positions:
+            new_var[pos] = sp.symbols(str(pos)+"#")
+
+
         # lin_origin dict
         subs_dict = dict()
         for acc in self.all_accelerations:
-            subs_dict[acc] = lin_origin[acc] + eps_dict[acc] * sp.symbols(str(acc)+"_")
+            subs_dict[acc] = lin_origin[acc] + eps_dict[acc] * new_var[acc]
         for vel in self.all_velocities:
-            subs_dict[vel] = lin_origin[vel] + eps_dict[vel] * sp.symbols(str(vel)+"_")
+            subs_dict[vel] = lin_origin[vel] + eps_dict[vel] * new_var[vel]
         for pos in self.all_positions:
-            subs_dict[pos] = lin_origin[pos] + eps_dict[pos] * sp.symbols(str(pos)+"_")
-        
+            subs_dict[pos] = lin_origin[pos] + eps_dict[pos] * new_var[pos]
+
         new_eoms = []
         for eq in eoms:
             new_eoms.append(eq.subs(subs_dict))
+            
+
+        zero_subs = dict()
+        y_positions = {"1": self.r/2, "2": self.r*1.5, "3":self.r*2.5, "4":self.r*3.5, "5":self.r*4.5, "m":self.r*5}
+        for k,v in lin_origin.items():
+            key_string = str(k)
+            if key_string.startswith("x"):
+                zero_subs[v] = 0
+            elif key_string.startswith("theta"):
+                zero_subs[v] = 0
+            elif key_string.startswith("y") and key_string.endswith("d"):
+                zero_subs[v] = 0
+            else:
+                y_val = y_positions[key_string[-1]]
+                zero_subs[v] = y_val
+                print("Setting ", v, " to ", y_val)
+
 
         M = sp.matrices.zeros(self.matrix_size)
         C = sp.matrices.zeros(self.matrix_size)
         K = sp.matrices.zeros(self.matrix_size)
+        F = sp.matrices.zeros(self.matrix_size, 1)
 
         for n in range(self.matrix_size):
+            if new_eoms[n].rhs:
+                F[n] = new_eoms[n].rhs
+            
+            #return new_eoms[n], eps_dict, lin_origin, subs_dict, new_var
             for m in range(self.matrix_size):
                 acc = self.all_accelerations[m]
                 vel = self.all_velocities[m]
                 pos = self.all_positions[m]
-                acc_subs_dict = dict([(eps, 0) for eps in eps_dict.keys()])
+                acc_subs_dict = dict([(eps, 0) for eps in eps_dict.values()])
                 acc_subs_dict[eps_dict[acc]] = 1
-                vel_subs_dict = dict([(eps, 0) for eps in eps_dict.keys()])
+                vel_subs_dict = dict([(eps, 0) for eps in eps_dict.values()])
                 vel_subs_dict[eps_dict[vel]] = 1
-                pos_subs_dict = dict([(eps, 0) for eps in eps_dict.keys()])
-                vel_subs_dict[eps_dict[pos]] = 1
+                pos_subs_dict = dict([(eps, 0) for eps in eps_dict.values()])
+                pos_subs_dict[eps_dict[pos]] = 1
 
-                M[m,n] = new_eoms[n].evalf(subs=acc_subs_dict)
-                C[m,n] = new_eoms[n].evalf(subs=vel_subs_dict)
-                K[m,n] = new_eoms[n].evalf(subs=pos_subs_dict)
+                acc_eq = new_eoms[n].evalf(subs=acc_subs_dict)
+                vel_eq = new_eoms[n].evalf(subs=vel_subs_dict)
+                pos_eq = new_eoms[n].evalf(subs=pos_subs_dict)
+                
+                acc_var = new_var[acc]
+                vel_var = new_var[vel]
+                pos_var = new_var[pos]
 
-        return M, C, K
-            
-        # velocities
-        # positions
+                acc_terms = sum([t for t in acc_eq.expand().lhs.args if acc_var in t.free_symbols])
+                vel_terms = sum([t for t in vel_eq.expand().lhs.args if vel_var in t.free_symbols])
+                pos_terms = sum([t for t in pos_eq.expand().lhs.args if pos_var in t.free_symbols])
 
+                M[m,n] = acc_terms.evalf(subs={acc_var:1}) if acc_terms else acc_terms
+                C[m,n] = vel_terms.evalf(subs={vel_var:1}) if vel_terms else vel_terms
+                K[m,n] = pos_terms.evalf(subs={pos_var:1}) if pos_terms else pos_terms
+        
+        self.linear_mass_matrix = M
+        self.linear_damping_matrix = C
+        self.linear_stiffness_matrix = K
+        self.linear_force_matrix = F
+
+        return M, C, K, F
 
 
     ## IMPLEMENT SYSTEM CONSTRAINTS
@@ -681,12 +725,11 @@ class NDOF_system(object):
 
     def plot_theta_positions(self):
         for i, theta in enumerate(self.theta_solution):
-            if i == 0:
-                label = "m"
-            else:
-                label = i
-            plt.plot(self.rk45_sol.t, theta, label=label)
+            label = i
+            plt.plot(self.rk45_sol.t, 180*theta/np.pi, label=label)
         plt.legend()
+        plt.xlabel("Time [s]")
+        plt.ylabel("Angle [deg]")
         plt.savefig("theta_positions.png")
         plt.cla()
 

@@ -17,7 +17,7 @@ rho_cable = 7850*A
 
 # Cable
                  # [kg/m]
-EI_pipe = 1e14                 # [N.m2]
+EI_pipe = 1e14               # [N.m2]
 EA_pipe = 0                   # neglecting elongation
 #EA_pipe = 210000000 * A      # [N]
 Top_cable = 0                 #  [m]
@@ -231,8 +231,8 @@ for i in range(nMode):
 # trial forcing
 c_F = 20 #kN
 F = np.zeros(len(DofsF))
-f = 1000* np.sin(np.arange(Top_cable+dx, Base_cable, dx)*np.pi/Base_cable)
-F[2::3] = f 
+f = 100* np.sin(np.arange(Top_cable+dx, Base_cable, dx)*np.pi/2/Base_cable)
+F[2::3] = f
 print(F)
 # time dependant forcing
 def Feq(t):
@@ -257,7 +257,7 @@ def qdot(t,q):
 q0 = np.zeros(2*nMode)
 
 # ------------------------- Solve the ODE in time using build-in solver ------------------ #  
-q = scpi.solve_ivp(fun=qdot,y0=q0,t_span=[0,1.5e4])
+q = scpi.solve_ivp(fun=qdot,y0=q0,t_span=[0,1.5e5])
 # ---------------------------------------------------------------------------------------- #
 print('Solving done')
 
@@ -313,10 +313,10 @@ fig = plt.figure()
 
 def animate(i):
     plt.cla()
-    plt.title(f"Time is {q.t[i*100]:.1f} s")
-    plt.plot(Ux[i*100], Uy[i*100])
+    plt.title(f"Time is {q.t[i*10]:.1f} s")
+    plt.plot(Ux[i], Uy[i])
     plt.ylim(-1, 1)
 
-anim = FuncAnimation(fig, animate, frames=len(q.t)//100,interval=1, repeat=False)
+    anim = FuncAnimation(fig, animate, frames=len(q.t)//10,interval=1, repeat=False)
 
-plt.show()
+

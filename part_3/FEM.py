@@ -8,6 +8,7 @@ Created on Fri Oct  7 14:45:55 2022
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy
+import pandas as pd
 from matplotlib.animation import FuncAnimation
 from BeamMatrices import BeamMatricesJacket
 from analytical import *
@@ -40,11 +41,23 @@ class ContinousBeam(object):
 
         # Define output time vector
         self.dt = 0.01                       # [s]
-        self.T = np.arange(0, 5*self.T0, self.dt)
-        self.nT = len(self.T)
 
         # Define node coordinates
         self.N_nodes = 100
+
+        # Modal analysis
+        self.plot_n_modes = 5
+        self.modal_damping_ratio = 0.05
+        
+        self.setup_system()
+    
+    def setup_system(self):
+        ### SETUP SECONDARY PARAMETERS AND MATRICES
+        # Setup time parameters
+        self.T = np.arange(0, 5*self.T0, self.dt)
+        self.nT = len(self.T)
+
+        # setup node coordinates 
         self.NodeCoord = np.zeros((self.N_nodes, 2))
         self.NodeCoord[:, 0] = np.linspace(self.top_cable, self.base_cable, self.N_nodes)
 
@@ -57,18 +70,12 @@ class ContinousBeam(object):
         self.free_dofs = np.arange(0, self.nDof)       #  Initially set all DOF's as free DOf's
         self.free_dofs = np.delete(self.free_dofs, self.prescribed_dofs)  # remove the fixed DOFs from the free DOFs array
 
-        # Modal analysis
-        self.plot_n_modes = 5
-        self.modal_damping_ratio = 0.05
-
         # Numerical parameters
         self.max_modes = self.N_nodes*3 - len(self.prescribed_dofs)
         self.n_modes = self.max_modes
         self.q0 = np.zeros(2*self.n_modes)
-        
-        self.setup_system()
-    
-    def setup_system(self):
+
+        # Setup matrices
         self.discretize_beam()
         self.setup_system_matrices()
         self.apply_boundary_conditions()
@@ -331,21 +338,32 @@ class ContinousBeam(object):
         print('Solving done')
     
     
-    def plot_frequency_convergence(self, dx_range_start, dx_range_stop):
+    def get_frequency_convergence(self, dx_range_start, dx_range_stop):
         mode_list = [1,2,3,4,5]
         analytical_freq = [self.analytical_omega(n)/2/np.pi for n in mode_list]
     
         # 20 - 50
         dx_list = np.arange(dx_range_start, dx_range_stop)
         errors = np.zeros((len(dx_list), len(analytical_freq)))
+        index = np.zeros(len(dx_list))
         for j,dx in enumerate(dx_list):
             self.N_nodes = int((self.base_cable-self.top_cable)/dx) + 1
             self.setup_system()
             numerical_freq = np.array([self.eigen_frequencies[i-1+self.first_mode] for i in mode_list])
             errors[j] = np.abs(analytical_freq - numerical_freq)
+            index[j] = self.dx
 
         self.convergence_errors = errors
-        
-        return self.convergence_errors
+    
+    def plot_frequency_convergence(self):
+        df = pd.DataFrame(self.convergence_errors, columns=[1,2,3,4,5], index=np.arange(5,100))
+        fig, ax = plt.subplots()
+        ax.set_xlabel('dx [m]')
+        ax.set_ylabel('Error [1/s]')
+        ax.set_title('Modal frequency error for the first five modes')
+        df.plot(ax=ax)
+        ax.grid(True, which='both')
+        ax.set_yscale('log')
+        ax.set_xscale('log')
 
 

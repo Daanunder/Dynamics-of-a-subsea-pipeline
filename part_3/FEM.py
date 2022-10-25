@@ -282,11 +282,13 @@ class ContinousBeam(object):
 
     # solving in time domain
     def get_solution_FEM(self):
-        self.solution = scipy.integrate.solve_ivp(fun=qdot,y0=self.q0,t_span=[self.T[0],self.T[-1]])
+        self.solution = scipy.integrate.solve_ivp(fun=self.qdot,y0=self.q0,t_span=[self.T[0],self.T[-1]])
         print('Solving done')
     
     
 
+
+beam = ContinousBeam()
 
 #plt.figure()
 #plt.plot(np.linspace(0,1e3, len(q.y[0])),q.y[1])

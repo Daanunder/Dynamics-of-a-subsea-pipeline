@@ -29,7 +29,7 @@ class ContinousBeam(object):
         # Cable
                          # [kg/m]
         self.EI_pipe = 1e8                 # [N.m2]
-        self.EA_pipe = 0                   # neglecting elongatio
+        self.EA_pipe = 1e6                   # neglecting elongatio
         #EA_pipe = 210000000 * A      # [N]
         self.top_cable = 0                 #  [m]
         self.base_cable = 5000             # [m]
@@ -37,13 +37,15 @@ class ContinousBeam(object):
         # Define load parameters
         self.f0 = 2                          # [Hz]
         self.A0 = 0.1                        # [m]
-        self.T0 = 20                         # [s]
+        self.T0 = 1000                         # [s]
 
         # Define output time vector
         self.dt = 0.01                       # [s]
 
         # Define node coordinates
         self.N_nodes = 100
+        self.n_modes = 10
+
 
         # Modal analysis
         self.plot_n_modes = 5
@@ -51,10 +53,10 @@ class ContinousBeam(object):
         
         self.setup_system()
     
-    def setup_system(self):
+    def setup_system(self, convergence_run=False):
         ### SETUP SECONDARY PARAMETERS AND MATRICES
         # Setup time parameters
-        self.T = np.arange(0, 5*self.T0, self.dt)
+        self.T = np.arange(0, self.T0, self.dt)
         self.nT = len(self.T)
 
         # setup node coordinates 
@@ -72,7 +74,8 @@ class ContinousBeam(object):
 
         # Numerical parameters
         self.max_modes = self.N_nodes*3 - len(self.prescribed_dofs)
-        self.n_modes = self.max_modes
+        if not self.n_modes:
+            self.n_modes = self.max_modes
         self.q0 = np.zeros(2*self.n_modes)
 
         # Setup matrices
@@ -80,7 +83,8 @@ class ContinousBeam(object):
         self.setup_system_matrices()
         self.apply_boundary_conditions()
         self.setup_modal_matrix()
-        #self.setup_decoupled_system()
+        if not convergence_run:
+            self.setup_decoupled_system()
     
     def append_equation_to_latex(self, eq, fname="eoms_latex.txt"):
         with open(fname, "a") as f:
@@ -168,6 +172,7 @@ class ContinousBeam(object):
 
     
     def apply_boundary_conditions(self):
+        #TODO: implement connectivity matrix
         # free & fixed array indices [M x N]
         fn = self.free_dofs[:, np.newaxis]
         fm = self.free_dofs[np.newaxis, :]
@@ -292,6 +297,7 @@ class ContinousBeam(object):
         plt.title(title)
 
     def setup_decoupled_system(self):
+        # TODO: make number of modes dynamic
         # Compute Modal quantities and decouple the system
         self.contributing_modes = slice(self.first_mode, min(self.n_modes+self.first_mode, self.max_modes))
         self.PHI = self.eigen_vectors[:,self.contributing_modes]
@@ -326,7 +332,7 @@ class ContinousBeam(object):
         #     return -(2*np.pi*f0)**2*ub(t, T0)
 
     # update function
-    def qdot(t,q):
+    def qdot(self, t,q):
         Um = q[0:self.n_modes]                                 # first entries are the displacemnt
         Vm = q[self.n_modes:2*self.n_modes]                           # second half is the velocity
         Am = ( self.get_forcing(t) - (self.Km * Um + self.Cm * Vm) ) / self.Mm      # compute the accelerations
@@ -335,6 +341,15 @@ class ContinousBeam(object):
     # solving in time domain
     def get_solution_FEM(self):
         self.solution = scipy.integrate.solve_ivp(fun=self.qdot,y0=self.q0,t_span=[self.T[0],self.T[-1]])
+        self.computed_time = self.solution.t
+        
+        #TODO: return to regular domain
+        # displacement solutions from modal to spatial domain
+        self.displacements = (self.PHI @ self.solution.y[:self.n_modes, :]).T.sum(axis=1)
+        
+        # velocity solution from modal to spatial domain
+        self.velocities = (self.PHI @ self.solution.y[self.n_modes:, :]).T.sum(axis=1)
+
         print('Solving done')
     
     
@@ -348,7 +363,7 @@ class ContinousBeam(object):
         index = np.zeros(len(dx_list))
         for j,dx in enumerate(dx_list):
             self.N_nodes = int((self.base_cable-self.top_cable)/dx) + 1
-            self.setup_system()
+            self.setup_system(convergence_run=True)
             numerical_freq = np.array([self.eigen_frequencies[i-1+self.first_mode] for i in mode_list])
             errors[j] = np.abs(analytical_freq - numerical_freq)
             index[j] = self.dx

@@ -37,7 +37,7 @@ class ContinousBeam(object):
         # Define load parameters
         self.f0 = 2                          # [Hz]
         self.A0 = 0.1                        # [m]
-        self.T0 = 1000                         # [s]
+        self.T0 = 1000000                         # [s]
 
         # Define output time vector
         self.dt = 0.01                       # [s]
@@ -345,13 +345,15 @@ class ContinousBeam(object):
         
         #TODO: return to regular domain
         # displacement solutions from modal to spatial domain
-        self.displacements = (self.PHI @ self.solution.y[:self.n_modes, :]).T.sum(axis=1)
+        self.displacements = np.array([self.PHI @ self.solution.y[:self.n_modes, t] for t in range(len(self.computed_time))]).T
         
         # velocity solution from modal to spatial domain
-        self.velocities = (self.PHI @ self.solution.y[self.n_modes:, :]).T.sum(axis=1)
+        self.velocities = np.array([self.PHI @ self.solution.y[self.n_modes:, t] for t in range(len(self.computed_time))]).T
 
         print('Solving done')
-    
+        
+    def plot_maximum_beam_displacement(self):
+        pass
     
     def get_frequency_convergence(self, dx_range_start, dx_range_stop):
         mode_list = [1,2,3,4,5]

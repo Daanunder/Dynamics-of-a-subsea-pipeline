@@ -8,7 +8,7 @@ Created on Fri Oct  7 14:45:55 2022
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy
-import pandas as pd
+import scipy.integrate
 from matplotlib.animation import FuncAnimation
 from BeamMatrices import BeamMatricesJacket
 from analytical import *
@@ -23,21 +23,28 @@ class ContinousBeam(object):
         self.analytical_omega = wn
 
         # Input parameters
-        self.A = 0.2
-        self.rho_cable = 7850
-
+        self.R = 0.5                       # [m] radius of pipe
+        self.thickness = 0.010              # [m] wall thickness
+        
+        # cross-sectional properites
+        self.A = 2*np.pi*self.R*self.thickness
+        self.I = np.pi/2*(self.R**4-(self.R-self.thickness)**4)
+    
+        # properties of steel
+        self.rho_cable = 7850               # [kg/m]
+        self.E = 210e9                      # [N/m^2] Elasticity modulus of steel
         # Cable
                          # [kg/m]
-        self.EI_pipe = 1e8                 # [N.m2]
-        self.EA_pipe = 1e6                   # neglecting elongatio
-        #EA_pipe = 210000000 * A      # [N]
-        self.top_cable = 0                 #  [m]
-        self.base_cable = 5000             # [m]
+        self.EI_pipe = self.E * self.I      # [N.m2]
+        #self.EA_pipe = 0                   # neglecting elongation
+        self.EA_pipe = self.E * self.A      # [N]
+        self.top_cable = 0                  # [m]
+        self.base_cable = 5000              # [m]
 
         # Define load parameters
         self.f0 = 2                          # [Hz]
         self.A0 = 0.1                        # [m]
-        self.T0 = 1000                         # [s]
+        self.T0 = 1000000                        # [s]
 
         # Define output time vector
         self.dt = 0.01                       # [s]
@@ -318,7 +325,7 @@ class ContinousBeam(object):
     def get_forcing(self, t):
         c_F = 20 #kN
         F = np.zeros(len(self.free_dofs))
-        f = 1000* np.sin(np.arange(self.top_cable+self.dx, self.base_cable, self.dx)*np.pi/self.base_cable)
+        f = 0.8* np.sin(np.arange(self.top_cable+self.dx, self.base_cable, self.dx)*np.pi/self.base_cable)
         F[2::3] = f 
         Fequ  = np.dot(self.PHI.T, F)
         return Fequ
@@ -340,7 +347,9 @@ class ContinousBeam(object):
 
     # solving in time domain
     def get_solution_FEM(self):
+        
         self.solution = scipy.integrate.solve_ivp(fun=self.qdot,y0=self.q0,t_span=[self.T[0],self.T[-1]])
+
         self.computed_time = self.solution.t
         
         #TODO: return to regular domain

@@ -1,6 +1,6 @@
 from irregular_waves import *
 
-def get_forcing(Hm0, Tp, tspan, f_min=0.001, f_max=0.2, num_of_comp=100, resolution=100):
+def get_forcing(Hm0, Tp, tspan, f_min=0.001, f_max=0.2, num_of_comp=10, resolution=100):
     f = np.linspace(f_min, f_max, resolution)
     E_js = jonswap(f, Hm0, Tp)
     df = abs(f_min - f_max)/num_of_comp

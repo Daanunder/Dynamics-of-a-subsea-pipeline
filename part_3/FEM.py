@@ -4,6 +4,8 @@ Created on Fri Oct  7 14:45:55 2022
 
 @author: thijs
 """
+import sys
+sys.path.insert(1, '../part_2')
 # start of FEM
 import numpy as np
 import matplotlib.pyplot as plt
@@ -12,6 +14,7 @@ import scipy.integrate
 from matplotlib.animation import FuncAnimation
 from BeamMatrices import BeamMatricesJacket
 from analytical import *
+from forcing import get_forcing as get_irregular_forcing
 
 class ContinousBeam(object):
 
@@ -43,10 +46,19 @@ class ContinousBeam(object):
         # Define load parameters
         self.f0 = 2                          # [Hz]
         self.A0 = 0.1                        # [m]
-        self.T0 = 1000000                         # [s]
+        self.T0 = 100000                         # [s]
+        
+        # irregular forcing parameters
+        self.apply_irregular_forcing = True
+        self.Hm0 = 4 #m
+        self.Tp = 20 #s
+        self.CD = 0.7 #-
+        self.ship_mass = 60e6 #kg
+        self.ship_area = 12000  #m2
+        self.rho_water = 1000 #kg/m3
 
         # Define output time vector
-        self.dt = 0.01                       # [s]
+        self.dt = 1                       # [s]
 
         # Define node coordinates
         self.N_nodes = 100
@@ -58,12 +70,19 @@ class ContinousBeam(object):
         self.modal_damping_ratio = 0.05
         
         self.setup_system()
+        
     
     def setup_system(self, convergence_run=False):
         ### SETUP SECONDARY PARAMETERS AND MATRICES
         # Setup time parameters
         self.T = np.arange(0, self.T0, self.dt)
         self.nT = len(self.T)
+
+        # Irregular forcing function
+        self.omega_waves = np.pi*2/self.Tp
+        self.amplitude_time_series = get_irregular_forcing(self.Hm0, self.Tp, self.T)[0]
+        self.irregular_forcing = 1/2*self.rho_water*(self.omega_waves*self.amplitude_time_series)**2*self.CD*self.ship_area
+
 
         # setup node coordinates 
         self.NodeCoord = np.zeros((self.N_nodes, 2))
@@ -140,7 +159,6 @@ class ContinousBeam(object):
             NodeRight = element[1]
             
             # Get the degrees of freedom that correspond to each node
-            ## TODO: implement connectivity matrix function
             Dofs_Left  = 3*(NodeLeft)  + np.arange(0, 3)
             Dofs_Right = 3*(NodeRight) + np.arange(0, 3)
 
@@ -150,7 +168,6 @@ class ContinousBeam(object):
             EI = element[4]
 
             # Calculate the local matrix of each element
-            # TODO: Document on translation/rotation matrix
             Me, Ke = BeamMatricesJacket(m, EA, EI, ([self.NodeCoord[NodeLeft][0], self.NodeCoord[NodeLeft][1]], [self.NodeCoord[NodeRight][0], self.NodeCoord[NodeRight][1]]))
 
             # Assemble the matrices at the correct place
@@ -178,7 +195,6 @@ class ContinousBeam(object):
 
     
     def apply_boundary_conditions(self):
-        #TODO: implement connectivity matrix
         # free & fixed array indices [M x N]
         fn = self.free_dofs[:, np.newaxis]
         fm = self.free_dofs[np.newaxis, :]
@@ -200,6 +216,7 @@ class ContinousBeam(object):
         K_PP = self.K[bm , bn]
 
         self.K_FF = K_FF
+        self.M_FP = M_FP
 
         return M_FF, K_FF
 
@@ -315,30 +332,34 @@ class ContinousBeam(object):
         self.Cm = np.zeros(available_modes)
 
         # Compute your "self.n_modes" entries of the modal mass, stiffness and damping
+        print("System Characteristics :")
         for i in range(available_modes):
             self.Mm[i] = self.PHI[:, i].T  @ self.M_FF @ self.PHI[:, i]
             self.Km[i] = self.PHI[:, i].T  @ self.K_FF @ self.PHI[:, i]
             self.Cm[i] = 2*self.modal_damping_ratio*np.sqrt(self.Mm[i]*self.Km[i])
-            print(f"Computing Mode: {i+1} \nMm = {self.Mm[i]:.3f}, Km = {self.Km[i]:.3f}, Cm = {self.Cm[i]:.3f}")
+            print(f"Mode: {i+1}: \t\t Mm = {self.Mm[i]:.3f}, Km = {self.Km[i]:.3f}, Cm = {self.Cm[i]:.3f}")
+        print("---------------------------\n")
 
     def get_forcing(self, t):
-        c_F = 20 #kN
-        F = np.zeros(len(self.free_dofs))
-        f = 0.8* np.sin(np.arange(self.top_cable+self.dx, self.base_cable, self.dx)*np.pi/self.base_cable)
-        F[2::3] = f 
-        Fequ  = np.dot(self.PHI.T, F)
-        return Fequ
-        # forcing
-        # def ub(t, T0):
-        #     if t <= T0:
-        #         return A0*np.sin(2*np.pi*f0*t)*np.array([1, 0, 0, 1, 0, 0])
-        #     else:
-        #         return np.array([0, 0, 0, 0, 0, 0])
-        # def dub_dt2(t, T0):
-        #     return -(2*np.pi*f0)**2*ub(t, T0)
+        if not self.apply_irregular_forcing:
+            c_F = 20 #kN
+            F = np.zeros(len(self.free_dofs))
+            f = 0.8* np.sin(np.arange(self.top_cable+self.dx, self.base_cable, self.dx)*np.pi/self.base_cable)
+            F[2::3] = f 
+            Fequ  = np.dot(self.PHI.T, F)
+            return Fequ
+        else:
+            # prescribe acceleration by dividing force over ship mass
+            A = np.zeros(len(self.prescribed_dofs))
+            force_index = np.argwhere(self.T >= t)[0][0]
+            A[2] = self.irregular_forcing[force_index] * 1000
+            F =  - self.M_FP.T @ A 
+            return self.PHI.T @ F
 
     # update function
-    def qdot(self, t,q):
+    def qdot(self, t, q):
+        if np.round(t % 1000) < 5 and t > 1000:
+            print("Time :",t, "Percentage :" , np.round(t/self.T[-1] * 100), end="\r")
         Um = q[0:self.n_modes]                                 # first entries are the displacemnt
         Vm = q[self.n_modes:2*self.n_modes]                           # second half is the velocity
         Am = ( self.get_forcing(t) - (self.Km * Um + self.Cm * Vm) ) / self.Mm      # compute the accelerations
@@ -351,17 +372,110 @@ class ContinousBeam(object):
 
         self.computed_time = self.solution.t
         
-        #TODO: return to regular domain
         # displacement solutions from modal to spatial domain
         self.displacements = np.array([self.PHI @ self.solution.y[:self.n_modes, t] for t in range(len(self.computed_time))]).T
+        zero_row = np.zeros(self.displacements.shape[1])
+        for pdof in self.prescribed_dofs:
+            p1 = self.displacements[:pdof]
+            p2 = self.displacements[pdof:]
+            self.displacements = np.concatenate((np.concatenate((p1, [zero_row]), axis=0), p2), axis=0)
+
+        self.x_displacements = self.displacements[0::3]
+        self.y_displacements = self.displacements[1::3]
+        self.theta_displacements = self.displacements[2::3]
+        self.curvature_displacements = np.abs(np.diff(self.theta_displacements, axis=0))*np.pi/180/(2*self.dx)
         
         # velocity solution from modal to spatial domain
         self.velocities = np.array([self.PHI @ self.solution.y[self.n_modes:, t] for t in range(len(self.computed_time))]).T
-
+        self.x_velocities = self.velocities[0::3]
+        self.y_velocities = self.velocities[1::3]
+        self.theta_velocities = self.velocities[2::3]
+    
+        print()
         print('Solving done')
         
-    def plot_maximum_beam_displacement(self):
-        pass
+    def plot_maximum_beam_displacement(self, fig=None, ax=None, ls="-"):
+        save = False
+        if not fig:
+            save = True
+            fig, ax = plt.subplots(2,2, figsize=(16, 12))
+        
+        ## Assume steady state is beyond half of the computation time
+        mask = self.computed_time > self.T[-1]/2
+        extra_index = len(mask) - np.count_nonzero(mask)
+
+        curvature_timestep = max(self.curvature_displacements[:,mask].argmax(axis=1)) + extra_index
+        y_timestep = max(self.y_displacements[:,mask].argmax(axis=1)) + extra_index
+
+        curvature_node = max(self.curvature_displacements[:,mask].argmax(axis=0))
+        y_node = max(self.y_displacements[:,mask].argmax(axis=0))
+
+        curvature1 = self.curvature_displacements[:, curvature_timestep]
+        y1 = self.y_displacements[:, y_timestep]
+
+        curvature2 = self.curvature_displacements[curvature_node, :]
+        y2 = self.y_displacements[y_node, :]
+
+        a = ax[0,0]
+        a.plot(np.linspace(self.top_cable, self.base_cable, self.N_nodes-1), curvature1, label=f"{self.Hm0} - {self.Tp}", ls=ls)
+        handles, labels = a.get_legend_handles_labels()
+        a.set_title(f"Maximum curvature occuring at t={np.round(self.computed_time[curvature_timestep],2)}s")
+        a.set_xlabel('Beam length [m]')
+        a.set_ylabel('Curvature [deg/m]')
+        a.grid()
+
+        a = ax[0,1]
+        a.plot(np.linspace(self.top_cable, self.base_cable, self.N_nodes), y1, ls=ls)
+        a.set_title(f"Maximum perpendicular displacement occuring at t={np.round(self.computed_time[y_timestep],2)}s")
+        a.set_xlabel('Beam length [m]')
+        a.set_ylabel('Displacement [m]')
+        a.grid()
+
+        a = ax[1,0]
+        a.plot(self.computed_time, curvature2, ls=ls)
+        a.set_title(f"Curvature occuring at element {curvature_node} over time")
+        a.set_xlabel('Time [s]')
+        a.set_ylabel('Curvature [deg/m]')
+        a.grid()
+
+        a = ax[1,1]
+        a.plot(self.computed_time, y2, ls=ls)
+        a.set_title(f"Perpendicular displacement occuring at element {y_node} over time")
+        a.set_xlabel('Time [s]')
+        a.set_ylabel('Displacement [m]')
+        a.grid()
+       
+        if save:
+            fig.suptitle(f"Maximum displacements and curvature for steady state (t > 500000s) and for single point over time")
+            fig.legend(handles, labels, title="Hm0 - Tp")
+            plt.savefig("system_response_irregular_forcing.png")
+            plt.cla()
+        return handles, labels
+
+    def get_system_response_irregular_forcing(self, Hm0_range, Tp_range):
+        fig, ax = plt.subplots(2,2, figsize=(16, 12))
+        all_handles = []
+        all_labels = []
+        line_styles = ["-", "--", "-.", ":"]
+        for Hm0 in Hm0_range:
+            for i,Tp in enumerate(Tp_range):
+                ls = line_styles[i]
+                print("=================")
+                print("Running simulation for Hm0: ", Hm0, " Tp: ", Tp)
+                print("=================")
+                self.Hm0 = float(Hm0)
+                self.Tp = float(Tp)
+                self.setup_system()
+                self.get_solution_FEM()
+                handles, labels = self.plot_maximum_beam_displacement(fig, ax, ls)
+                all_handles.extend(handles)
+                all_labels.extend(labels)
+
+        fig.suptitle(f"Maximum displacements of the full beam when steady state is reached (> 500000s) and for single point over time")
+        fig.legend(handles, labels, title="Hm0 - Tp")
+        plt.savefig("system_response_irregular_forcing.png")
+        plt.cla()
+
     
     def get_frequency_convergence(self, dx_range_start, dx_range_stop):
         mode_list = [1,2,3,4,5]

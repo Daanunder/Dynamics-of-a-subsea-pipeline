@@ -11,6 +11,7 @@ import scipy
 import scipy.integrate
 from matplotlib.animation import FuncAnimation
 from BeamMatrices import BeamMatricesJacket
+from StringForcesAndStiffness import StringForcesAndStiffness
 from analytical import *
 
 class ContinousBeam(object):
@@ -42,9 +43,10 @@ class ContinousBeam(object):
         self.base_cable = 5000              # [m]
 
         # Define load parameters
-        self.f0 = 2                          # [Hz]
+        self.mode_force = 1
+        self.f0 = 1                          # [Hz]
         self.A0 = 0.1                        # [m]
-        self.T0 = 1000000                        # [s]
+        self.T0 = 500000                        # [s]
 
         # Define output time vector
         self.dt = 0.01                       # [s]
@@ -83,6 +85,7 @@ class ContinousBeam(object):
         self.max_modes = self.N_nodes*3 - len(self.prescribed_dofs)
         if not self.n_modes:
             self.n_modes = self.max_modes
+        # Initial condition
         self.q0 = np.zeros(2*self.n_modes)
 
         # Setup matrices
@@ -323,9 +326,8 @@ class ContinousBeam(object):
             print(f"Computing Mode: {i+1} \nMm = {self.Mm[i]:.3f}, Km = {self.Km[i]:.3f}, Cm = {self.Cm[i]:.3f}")
 
     def get_forcing(self, t):
-        c_F = 20 #kN
         F = np.zeros(len(self.free_dofs))
-        f = 0.8* np.sin(np.arange(self.top_cable+self.dx, self.base_cable, self.dx)*np.pi/self.base_cable)
+        f = 0.05* np.sin(np.arange(self.top_cable+self.dx, self.base_cable, self.dx)*np.pi*self.mode_force/(self.base_cable))
         F[2::3] = f 
         Fequ  = np.dot(self.PHI.T, F)
         return Fequ
@@ -349,17 +351,24 @@ class ContinousBeam(object):
     def get_solution_FEM(self):
         
         self.solution = scipy.integrate.solve_ivp(fun=self.qdot,y0=self.q0,t_span=[self.T[0],self.T[-1]])
-
+        
         self.computed_time = self.solution.t
+        print(self.get_forcing(self.solution.t).shape)
+        self.accelerations = (((self.PHI @ self.get_forcing(self.solution.t))-(1 * self.solution.y[:self.n_modes, :]+ 1 *  self.solution.y[self.n_modes:, :])))/1
         
         #TODO: return to regular domain
         # displacement solutions from modal to spatial domain
-        self.displacements = (self.PHI @ self.solution.y[:self.n_modes, :]).T.sum(axis=1)
+        self.displacements = (self.PHI @ self.solution.y[:self.n_modes, :])
         
         # velocity solution from modal to spatial domain
-        self.velocities = (self.PHI @ self.solution.y[self.n_modes:, :]).T.sum(axis=1)
+        self.velocities = (self.PHI @ self.solution.y[self.n_modes:, :])
 
         print('Solving done')
+    
+    def get_support_reaction(self):
+        # TODO: Document on translation/rotation matrix
+        self.displacements[0]
+    
     
     
     def get_frequency_convergence(self, dx_range_start, dx_range_stop):
@@ -389,5 +398,208 @@ class ContinousBeam(object):
         ax.grid(True, which='both')
         ax.set_yscale('log')
         ax.set_xscale('log')
+        
+        
+        
+class Cable(object):
+    
+    def __init__(self):
+        
+        # physical parameters
+        self.L = 60      # [m] string length
+        self.D = 0.75*self.L  # [m] distance between supports
+        self.EA = 1e6    # [Pa] stiffness
+        self.m = 1       # [kg] mass
+        self.g = 9.81    # [m/s^2] gravity constant
+        
+        
+        # numerical parameters
+        self.lmax = 1                               # [m] maximum length of each string(wire) element
+        self.nElem = int(np.ceil(self.L/self.lmax)) # [-] number of elements   
+        self.lElem = self.L/self.nElem              # [m] actual tensionless element size
+        self.nNode = self.nElem + 1                 # [-] number of nodes 
 
+        self.nMaxIter = 100                         # [-] max iterations done by solver
+        self.TENSION_ONLY = 1                       # 0 both compression and tension, 1 tension only
+       
+        # Initial position
+        self.SAG = 20                               # [m] Choose a big enough sag to have as much elements under tension as possible
 
+        self.setup_system()
+
+    def setup_system(self):
+        self.discretize_cable()
+        self.boundary_conditions()
+        self.initial_position()
+        self.define_external_forcing()
+        
+    
+    def discretize_cable(self):
+        self.NodeCoord = np.zeros((self.nNode, 2))
+        self.Element = np.zeros((self.nElem, 5))
+        
+        for iElem in np.arange(0, self.nElem):
+            NodeLeft = iElem
+            NodeRight = iElem + 1
+            self.NodeCoord[NodeRight] = self.NodeCoord[NodeLeft] + [self.lElem, 0]
+            self.Element[iElem, :] = [NodeLeft, NodeRight, self.m, self.EA, self.lElem]
+
+    def plot_discretization(self):
+        plt.figure()
+        for iElem in np.arange(0, self.nElem):
+            NodeLeft = int(self.Element[iElem, 0])
+            NodeRight = int(self.Element[iElem, 1])
+        
+            plt.plot([self.NodeCoord[NodeLeft][0], self.NodeCoord[NodeRight][0]], [self.NodeCoord[NodeLeft][1], self.NodeCoord[NodeRight][1]], 'g')
+            
+        # plot the supports
+        plt.plot([0, self.D], [0, 0], 'vr')
+        plt.axis('equal')
+        
+    def boundary_conditions(self):
+        self.nDof = 2*self.nNode                                    # number of DOFs
+        self.FreeDof = np.arange(0, self.nDof)                      # free DOFs 
+        self.FixedDof = [0,1,-2, -1]                                # fixed DOFs
+        self.FreeDof = np.delete(self.FreeDof, self.FixedDof)       # remove the fixed DOFs from the free DOFs array
+        
+        # free & fixed array indices
+        self.fx = self.FreeDof[:, np.newaxis]
+        self.fy = self.FreeDof[np.newaxis, :]
+
+    def initial_position(self):
+        # compute parabola for inital configuration    
+        x = np.array([0, 22.5, 45])
+        y = np.array([0, -self.SAG,  0])
+        A =np.zeros((3,3))
+        for i, val in enumerate(x):
+            A[i] = np.array([1,val, val**2])
+        c, b, a =np.linalg.solve(A, y)
+        # array of Nodes
+        s = np.array([i[0] for i in self.NodeCoord])
+
+        x = 45*((s-s[0])/(s[-1]-s[0]))+s[0] 
+        y = a*x**2+b*x+c
+        self.u = np.zeros((self.nDof))
+        self.u[0:self.nDof+1:2] = x - np.array([i[0] for i in self.NodeCoord])
+        self.u[1:self.nDof+1:2] = y - np.array([i[1] for i in self.NodeCoord])
+
+    def plot_cable(self, Iter = None):
+        # plot the initial guess
+        plt.figure()
+        for iElem in np.arange(0, self.nElem):
+            NodeLeft = int(self.Element[iElem, 0])
+            NodeRight = int(self.Element[iElem, 1])
+            DofsLeft = 2*NodeLeft 
+            DofsRight = 2*NodeRight
+            plt.plot([self.NodeCoord[NodeLeft][0] + self.u[DofsLeft], self.NodeCoord[NodeRight][0] + self.u[DofsRight]], 
+                        [self.NodeCoord[NodeLeft][1] + self.u[DofsLeft + 1], self.NodeCoord[NodeRight][1] + self.u[DofsRight + 1]], '-ok')
+            plt.plot([self.NodeCoord[NodeLeft][0], self.NodeCoord[NodeRight][0]], [self.NodeCoord[NodeLeft][1], self.NodeCoord[NodeRight][1]], 'g')
+                
+        # plot the supports
+        plt.plot([0, self.D], [0, 0], 'vr')
+        plt.axis('equal')
+        plt.xlabel("x [m]")
+        plt.ylabel("y [m]")
+        if Iter:
+            plt.title("Iteration: "+ str(Iter))
+        
+    def define_external_forcing(self):
+        self.Pext = np.zeros((self.nDof))
+        for iElem in np.arange(0, self.nElem):
+            NodeLeft = int(self.Element[iElem, 0])
+            NodeRight = int(self.Element[iElem, 1])
+            DofsLeft = 2*NodeLeft 
+            DofsRight = 2*NodeRight
+            l0 = self.Element[iElem, 4]
+            m = self.Element[iElem, 2]
+            Pelem = -self.g*l0*m/2                           # Half weight to each node
+            self.Pext[DofsLeft + 1] += Pelem
+            self.Pext[DofsRight + 1] += Pelem
+            
+    def static_solver(self):
+        CONV = 0
+        PLOT = False
+        kIter = 0
+        self.TENSION = np.zeros((self.nElem))
+        
+        while CONV == 0:
+            kIter += 1
+            print("Iteration: "+str(kIter)+" ...\n")
+            # Check stability - define a number of maximum iterations. If solution
+            # hasn't converged, check what is going wrong (if something).
+            if kIter > self.nMaxIter:
+                break
+            
+            # Assemble vector with internal forces and stiffnes matrix
+            K = np.zeros((self.nDof*self.nDof)) 
+            Fi = np.zeros((self.nDof))
+            for iElem in np.arange(0, self.nElem):
+                NodeLeft = int(self.Element[iElem, 0])
+                NodeRight = int(self.Element[iElem, 1])
+                DofsLeft = 2*NodeLeft 
+                DofsRight = 2*NodeRight
+                l0 = self.Element[iElem, 4]
+                EA = self.Element[iElem, 3]
+                NodePos = ([self.NodeCoord[NodeLeft][0] + self.u[DofsLeft], self.NodeCoord[NodeRight][0] + self.u[DofsRight]], 
+                            [self.NodeCoord[NodeLeft][1] + self.u[DofsLeft + 1], self.NodeCoord[NodeRight][1] + self.u[DofsRight + 1]])
+                Fi_elem, K_elem, Tension, WARN = StringForcesAndStiffness(NodePos, EA, l0, self.TENSION_ONLY)
+                self.TENSION[iElem] = Tension
+        
+        
+                if WARN:
+                    print("WARNING: Element "+str(iElem+1)+" is under compression.\n")
+                
+                Fi[DofsLeft:DofsLeft + 2] += Fi_elem[0]
+                Fi[DofsRight:DofsRight + 2] += Fi_elem[1]
+        
+                # Assemble the matrices at the correct place
+                # Get the degrees of freedom that correspond to each node
+                Dofs_Left = 2*(NodeLeft) + np.arange(0, 2)
+                Dofs_Right = 2*(NodeRight) + np.arange(0, 2)
+                nodes = np.append(Dofs_Left , Dofs_Right)
+                for i in np.arange(0, 4):
+                    for j in np.arange(0, 4):
+                        ij = nodes[i] + nodes[j]*self.nDof
+                        K[ij] = K[ij] + K_elem[i, j]
+        
+            K = K.reshape((self.nDof, self.nDof))
+        
+            # Calculate residual forces
+            R = self.Pext - Fi
+        
+            # Check for convergence
+            if np.linalg.norm(R[self.FreeDof])/np.linalg.norm(self.Pext[self.FreeDof]) < 1e-3:
+                CONV = 1
+        
+            # Calculate increment of displacements
+            du = np.zeros((self.nDof))
+            du[self.FreeDof] = np.linalg.solve(K[self.fx, self.fy], R[self.FreeDof])
+        
+            # Apply archlength to help with convergence
+            Scale = np.min(np.append(np.array([1]), self.lElem/np.max(np.abs(du))))
+            du = du*Scale   # Enforce that each node does not displace
+                            # more (at each iteration) than the length
+                            # of the elements
+        
+            # Update displacement of nodes
+            self.u += du
+        
+            # plot the updated configuration
+            if PLOT:
+                self.plot_cable(Iter = kIter)
+        
+        if CONV == 1:
+            print("Converged solution at iteration: "+str(kIter))
+            self.plot_cable(Iter = kIter)
+        else:
+            print("Solution did not converge")
+        
+
+    def plot_tension(self):
+        plt.figure()
+        X = (np.array([i[0] for i in self.NodeCoord[0:-1]]) + np.array([i[0] for i in self.NodeCoord[1:]]))/2
+        plt.plot(X, self.TENSION)
+        plt.title("Tension")
+        plt.xlabel("x [m]")
+        plt.ylabel("T [N]")
+    

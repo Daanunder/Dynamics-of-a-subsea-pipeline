@@ -11,6 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy
 import scipy.integrate
+import datetime
 from matplotlib.animation import FuncAnimation
 from BeamMatrices import BeamMatricesJacket
 from analytical import *
@@ -27,7 +28,7 @@ class ContinousBeam(object):
 
         # Input parameters
         self.R = 0.5                       # [m] radius of pipe
-        self.thickness = 0.010              # [m] wall thickness
+        self.thickness = 0.020              # [m] wall thickness
         
         # cross-sectional properites
         self.A = 2*np.pi*self.R*self.thickness
@@ -46,7 +47,7 @@ class ContinousBeam(object):
         # Define load parameters
         self.f0 = 2                          # [Hz]
         self.A0 = 0.1                        # [m]
-        self.T0 = 100000                         # [s]
+        self.T0 = 10000
         
         # irregular forcing parameters
         self.apply_irregular_forcing = True
@@ -54,15 +55,21 @@ class ContinousBeam(object):
         self.Tp = 20 #s
         self.CD = 0.7 #-
         self.ship_mass = 60e6 #kg
-        self.ship_area = 12000  #m2
+        self.ship_area = 6000  #m2
         self.rho_water = 1000 #kg/m3
+        #self.Hm0_range = [4, 8, 10, 12]
+        #self.Tp_range = [6, 8, 10, 12]
+        # (Hm0, Tp) pairs
+        #self.wave_characteristics = [(4, 6), (4, 8), (4, 10), (6, 6), (6, 8), (6, 10), (8, 6), (8, 8), (8, 10), (10, 8), (10, 10), (10, 12)
+        self.wave_characteristics = [(4,10), (4,12), (6, 12), (6, 14), (8, 12), (8, 14), (8, 16), (10, 14), (10, 16), (12, 16), (16, 18)]
+        self.K_ship = 10e8
 
         # Define output time vector
-        self.dt = 1                       # [s]
+        self.dt = 0.1                       # [s]
 
         # Define node coordinates
         self.N_nodes = 100
-        self.n_modes = 10
+        self.n_modes = 20
 
 
         # Modal analysis
@@ -76,12 +83,22 @@ class ContinousBeam(object):
         ### SETUP SECONDARY PARAMETERS AND MATRICES
         # Setup time parameters
         self.T = np.arange(0, self.T0, self.dt)
+        self.forcing_t = np.arange(0, self.T0+self.Tp/4, self.dt)
         self.nT = len(self.T)
 
         # Irregular forcing function
         self.omega_waves = np.pi*2/self.Tp
-        self.amplitude_time_series = get_irregular_forcing(self.Hm0, self.Tp, self.T)[0]
-        self.irregular_forcing = 1/2*self.rho_water*(self.omega_waves*self.amplitude_time_series)**2*self.CD*self.ship_area
+        # make sure velocity and amplitude are 90deg out of phase
+        phase_mask = self.forcing_t >= self.Tp/4
+        self.amplitude_time_series = get_irregular_forcing(self.Hm0, self.Tp, self.forcing_t)[0][phase_mask]
+        self.flow_velocity_time_series = 1/2*self.rho_water*(self.omega_waves*self.amplitude_time_series)**2*self.CD*self.ship_area
+        self.irregular_forcing = [self.amplitude_time_series, self.flow_velocity_time_series]
+
+        # Workability limits
+        # steel yield strenght = 355
+        self.max_curvature = 355*10**6 / (self.E * self.R)
+        self.max_drift = 1000.0 
+        self.max_elongation = 355*10**6 / self.E
 
 
         # setup node coordinates 
@@ -332,13 +349,13 @@ class ContinousBeam(object):
         self.Cm = np.zeros(available_modes)
 
         # Compute your "self.n_modes" entries of the modal mass, stiffness and damping
-        print("System Characteristics :")
+        #print("System Characteristics :")
         for i in range(available_modes):
             self.Mm[i] = self.PHI[:, i].T  @ self.M_FF @ self.PHI[:, i]
             self.Km[i] = self.PHI[:, i].T  @ self.K_FF @ self.PHI[:, i]
             self.Cm[i] = 2*self.modal_damping_ratio*np.sqrt(self.Mm[i]*self.Km[i])
-            print(f"Mode: {i+1}: \t\t Mm = {self.Mm[i]:.3f}, Km = {self.Km[i]:.3f}, Cm = {self.Cm[i]:.3f}")
-        print("---------------------------\n")
+            #print(f"Mode: {i+1}: \t\t Mm = {self.Mm[i]:.3f}, Km = {self.Km[i]:.3f}, Cm = {self.Cm[i]:.3f}")
+        #print("---------------------------\n")
 
     def get_forcing(self, t):
         if not self.apply_irregular_forcing:
@@ -352,7 +369,8 @@ class ContinousBeam(object):
             # prescribe acceleration by dividing force over ship mass
             A = np.zeros(len(self.prescribed_dofs))
             force_index = np.argwhere(self.T >= t)[0][0]
-            A[2] = self.irregular_forcing[force_index] * 1000
+            A[0] = self.irregular_forcing[0][force_index] * self.K_ship
+            A[1] = self.irregular_forcing[1][force_index] / self.ship_mass
             F =  - self.M_FP.T @ A 
             return self.PHI.T @ F
 
@@ -367,7 +385,7 @@ class ContinousBeam(object):
 
     # solving in time domain
     def get_solution_FEM(self):
-        
+        starttime = datetime.datetime.now()
         self.solution = scipy.integrate.solve_ivp(fun=self.qdot,y0=self.q0,t_span=[self.T[0],self.T[-1]])
 
         self.computed_time = self.solution.t
@@ -383,38 +401,47 @@ class ContinousBeam(object):
         self.x_displacements = self.displacements[0::3]
         self.y_displacements = self.displacements[1::3]
         self.theta_displacements = self.displacements[2::3]
-        self.curvature_displacements = np.abs(np.diff(self.theta_displacements, axis=0))*np.pi/180/(2*self.dx)
+        self.curvature_displacements = np.diff(self.theta_displacements, axis=0)*np.pi/180/(2*self.dx)
+        self.elongation = np.diff(self.x_displacements, axis=0)
+        self.normal_stress = self.elongation*self.E
+        self.bending_stress = self.curvature_displacements*self.E*self.R
+        self.total_stress = self.bending_stress + self.normal_stress
         
         # velocity solution from modal to spatial domain
         self.velocities = np.array([self.PHI @ self.solution.y[self.n_modes:, t] for t in range(len(self.computed_time))]).T
         self.x_velocities = self.velocities[0::3]
         self.y_velocities = self.velocities[1::3]
         self.theta_velocities = self.velocities[2::3]
-    
+        
+        duration = datetime.datetime.now() - starttime
         print()
-        print('Solving done')
+        print(f'Solving done, took me: {duration} seconds')
         
     def plot_maximum_beam_displacement(self, fig=None, ax=None, ls="-"):
         save = False
         if not fig:
             save = True
-            fig, ax = plt.subplots(2,2, figsize=(16, 12))
+            fig, ax = plt.subplots(2,3, figsize=(20, 12))
         
         ## Assume steady state is beyond half of the computation time
         mask = self.computed_time > self.T[-1]/2
         extra_index = len(mask) - np.count_nonzero(mask)
 
-        curvature_timestep = max(self.curvature_displacements[:,mask].argmax(axis=1)) + extra_index
-        y_timestep = max(self.y_displacements[:,mask].argmax(axis=1)) + extra_index
+        curvature_timestep = max(np.abs(self.curvature_displacements[:,mask]).argmax(axis=1)) + extra_index
+        y_timestep = max(np.abs(self.y_displacements[:,mask]).argmax(axis=1)) + extra_index
+        elongation_timestep = max(np.abs(self.elongation[:,mask]).argmax(axis=1)) + extra_index
 
-        curvature_node = max(self.curvature_displacements[:,mask].argmax(axis=0))
-        y_node = max(self.y_displacements[:,mask].argmax(axis=0))
+        curvature_node = max(np.abs(self.curvature_displacements[:,mask]).argmax(axis=0))
+        y_node = max(np.abs(self.y_displacements[:,mask]).argmax(axis=0))
+        elongation_node = max(np.abs(self.elongation[:,mask]).argmax(axis=0))
 
         curvature1 = self.curvature_displacements[:, curvature_timestep]
         y1 = self.y_displacements[:, y_timestep]
+        elongation1 = self.elongation[:, elongation_timestep]
 
         curvature2 = self.curvature_displacements[curvature_node, :]
         y2 = self.y_displacements[y_node, :]
+        elongation2 = self.elongation[elongation_node, :]
 
         a = ax[0,0]
         a.plot(np.linspace(self.top_cable, self.base_cable, self.N_nodes-1), curvature1, label=f"{self.Hm0} - {self.Tp}", ls=ls)
@@ -431,11 +458,18 @@ class ContinousBeam(object):
         a.set_ylabel('Displacement [m]')
         a.grid()
 
+        a = ax[0,2]
+        a.plot(np.linspace(self.top_cable, self.base_cable, self.N_nodes-1), elongation1, ls=ls)
+        a.set_title(f"Maximum elongation occuring at t={np.round(self.computed_time[elongation_timestep],2)}s")
+        a.set_xlabel('Beam length [m]')
+        a.set_ylabel('Elongation [m/m]')
+        a.grid()
+
         a = ax[1,0]
         a.plot(self.computed_time, curvature2, ls=ls)
         a.set_title(f"Curvature occuring at element {curvature_node} over time")
         a.set_xlabel('Time [s]')
-        a.set_ylabel('Curvature [deg/m]')
+        a.set_ylabel('Curvature [1/m]')
         a.grid()
 
         a = ax[1,1]
@@ -444,37 +478,56 @@ class ContinousBeam(object):
         a.set_xlabel('Time [s]')
         a.set_ylabel('Displacement [m]')
         a.grid()
+
+        a = ax[1,2]
+        a.plot(self.computed_time, elongation2, ls=ls)
+        a.set_title(f"Elongation occuring at element {elongation_node} over time")
+        a.set_xlabel('Time [s]')
+        a.set_ylabel('Elongation [m/m]')
+        a.grid()
        
         if save:
-            fig.suptitle(f"Maximum displacements and curvature for steady state (t > 500000s) and for single point over time")
+            fig.suptitle(f"Workability for the steady state (t > 500000s), with maximum curvature: {self.max_curvature:.2f}, maximum perpendicular drift: {self.max_drift:.2f} and maximum elongation {self.max_elongation:.2f}")
             fig.legend(handles, labels, title="Hm0 - Tp")
             plt.savefig("system_response_irregular_forcing.png")
             plt.cla()
         return handles, labels
 
-    def get_system_response_irregular_forcing(self, Hm0_range, Tp_range):
-        fig, ax = plt.subplots(2,2, figsize=(16, 12))
+    def get_system_response_irregular_forcing(self, wave_characteristics=None):
+        if not wave_characteristics:
+            wave_characteristics = self.wave_characteristics
+
+        fig, ax = plt.subplots(2,3, figsize=(20, 14))
+        #ax[0,0].hlines([self.max_curvature, -self.max_curvature], self.base_cable, self.top_cable)
+        #ax[1,0].hlines([self.max_curvature, -self.max_curvature], self.T[0], self.T[-1])
+        ax[0,1].hlines([self.max_drift, -self.max_drift], self.base_cable, self.top_cable)
+        ax[1,1].hlines([self.max_drift, -self.max_drift], self.T[0], self.T[-1])
+        #ax[0,2].hlines([self.max_elongation, -self.max_elongation], self.base_cable, self.top_cable)
+        #ax[1,2].hlines([self.max_elongation, -self.max_elongation], self.T[0], self.T[-1])
+
         all_handles = []
         all_labels = []
         line_styles = ["-", "--", "-.", ":"]
-        for Hm0 in Hm0_range:
-            for i,Tp in enumerate(Tp_range):
-                ls = line_styles[i]
-                print("=================")
-                print("Running simulation for Hm0: ", Hm0, " Tp: ", Tp)
-                print("=================")
-                self.Hm0 = float(Hm0)
-                self.Tp = float(Tp)
-                self.setup_system()
-                self.get_solution_FEM()
-                handles, labels = self.plot_maximum_beam_displacement(fig, ax, ls)
-                all_handles.extend(handles)
-                all_labels.extend(labels)
+        for i, (Hm0, Tp) in enumerate(wave_characteristics):
+            ls = line_styles[i % 4]
+            print("=================")
+            print("Running simulation for Hm0: ", Hm0, " Tp: ", Tp)
+            self.Hm0 = float(Hm0)
+            self.Tp = float(Tp)
+            self.setup_system()
+            self.get_solution_FEM()
+            handles, labels = self.plot_maximum_beam_displacement(fig, ax, ls)
+            all_handles.extend(handles)
+            all_labels.extend(labels)
+            print("=================")
 
-        fig.suptitle(f"Maximum displacements of the full beam when steady state is reached (> 500000s) and for single point over time")
+        fig.suptitle(f"Workability for the steady state (t > 500000s), with maximum curvature: {self.max_curvature:.2}, maximum perpendicular drift: {self.max_drift:.2} and maximum elongation {self.max_elongation:.2}", fontsize=16)
         fig.legend(handles, labels, title="Hm0 - Tp")
+        #plt.tight_layout()
         plt.savefig("system_response_irregular_forcing.png")
-        plt.cla()
+
+
+        return fig, ax
 
     
     def get_frequency_convergence(self, dx_range_start, dx_range_stop):

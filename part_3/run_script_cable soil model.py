@@ -24,6 +24,7 @@ fig, ax = plt.subplots(2, 3, figsize = (30, 15))
 karr = [0, 50, 300]
 sagarr = [10, 15, 40]
 print(ax.shape)
+a = [0,0,0]
 for i in range(3):
     ml = Cable()
     ml.ksoil = karr[i]
@@ -31,13 +32,21 @@ for i in range(3):
     ml.static_solver()
     try:
         ax[0, i].plot(ml.sol[0], ml.sol[1], color = 'black')
+        
     except AttributeError:
         print("No attribute sol")
     ax[0, i].hlines(0, -ml.R*1.1, ml.R*1.1, color= 'brown')
     ax[0, i].set_title(f"Solution after {ml.kIter} iterations and ksoil = {karr[i]} N/m")
     ax[0, i].set_xlabel("x [m]")
+    
+    ax[0, i].plot([-ml.R, 0, ml.R], [-ml.anchor_depth, ml.H, -ml.anchor_depth], 'vr')
     ax[0, i].set_ylabel("y [m]")
     ax[1, i].plot(ml.TENSION)
+    a[i] = (ml.TENSION.min())
     ax[1, i].set_title("Tension")
     ax[1, i].set_xlabel("x [m]")
     ax[1, i].set_ylabel("T [N]")
+print(ml.A*ml.rho*ml.g)
+print(ml.L/2)
+plt.savefig('Soil Model.jpg')
+print(ml.EA)

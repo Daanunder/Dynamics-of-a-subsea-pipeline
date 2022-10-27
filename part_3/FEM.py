@@ -406,24 +406,38 @@ class Cable(object):
     def __init__(self):
         
         # physical parameters
-        self.L = 60      # [m] string length
-        self.D = 0.75*self.L  # [m] distance between supports
-        self.EA = 1e6    # [Pa] stiffness
-        self.m = 1       # [kg] mass
-        self.g = 9.81    # [m/s^2] gravity constant
+        self.g = 9.81               # [m/s^2] gravity constant
+        self.ksoil = 0        # [N/m] spring stiffnes soil
         
+        # material properties
+        self.rho = 7850             # [kg/m^3] density of steel
+        self.E = 210e9              # [N/m^2] elasticity modulus of steel
         
+        # cross-sectional properties
+        self.d = 0.05               # [m] diameter of cable
+        self.A = np.pi*(self.d/2)**2 # [m^2] cross-sectional area    
+        self.EA = self.E *self.A    # [Pa] stiffness
+
+        # Initial position
+        self.SAG = 10                            # [m] Choose a big enough sag to have as much elements under tension as possible
+        self.anchor_depth = 1                   # [m] depth ofanchor below soil
+        self.H = 20                                 # [m] height of pipeline above bed
+        self.Fd = 0                               # [N] Horizontal design load 
+        self.R = 15                                 # [m] anchor radius or distance between anchor and pipeline
+        self.L = 2.3 * np.sqrt((self.H+self.anchor_depth)**2+self.R**2)   # [m] combined length of mooring lines
+        print(self.L/2)
         # numerical parameters
         self.lmax = 1                               # [m] maximum length of each string(wire) element
-        self.nElem = int(np.ceil(self.L/self.lmax)) # [-] number of elements   
+        self.nElem = int(np.ceil(self.L/self.lmax)) # [-] number of elements  
+        if self.nElem % 2 != 0:
+            self.nElem +=1
         self.lElem = self.L/self.nElem              # [m] actual tensionless element size
         self.nNode = self.nElem + 1                 # [-] number of nodes 
 
-        self.nMaxIter = 100                         # [-] max iterations done by solver
+        self.nMaxIter = 800                         # [-] max iterations done by solver
         self.TENSION_ONLY = 1                       # 0 both compression and tension, 1 tension only
        
-        # Initial position
-        self.SAG = 20                               # [m] Choose a big enough sag to have as much elements under tension as possible
+
 
         self.setup_system()
 
@@ -442,8 +456,11 @@ class Cable(object):
             NodeLeft = iElem
             NodeRight = iElem + 1
             self.NodeCoord[NodeRight] = self.NodeCoord[NodeLeft] + [self.lElem, 0]
-            self.Element[iElem, :] = [NodeLeft, NodeRight, self.m, self.EA, self.lElem]
+            self.Element[iElem, :] = [NodeLeft, NodeRight, self.rho*self.A*self.lElem, self.EA, self.lElem]
 
+    def plot_supports(self):
+        plt.plot([-self.R, 0, self.R], [-self.anchor_depth, self.H, -self.anchor_depth], 'vr')
+        
     def plot_discretization(self):
         plt.figure()
         for iElem in np.arange(0, self.nElem):
@@ -453,13 +470,13 @@ class Cable(object):
             plt.plot([self.NodeCoord[NodeLeft][0], self.NodeCoord[NodeRight][0]], [self.NodeCoord[NodeLeft][1], self.NodeCoord[NodeRight][1]], 'g')
             
         # plot the supports
-        plt.plot([0, self.D], [0, 0], 'vr')
+        self.plot_supports()
         plt.axis('equal')
         
     def boundary_conditions(self):
         self.nDof = 2*self.nNode                                    # number of DOFs
         self.FreeDof = np.arange(0, self.nDof)                      # free DOFs 
-        self.FixedDof = [0,1,-2, -1]                                # fixed DOFs
+        self.FixedDof = [0,1,self.nDof//2,  -2,-1]               # fixed DOFs, vertical free but horizontal stiff
         self.FreeDof = np.delete(self.FreeDof, self.FixedDof)       # remove the fixed DOFs from the free DOFs array
         
         # free & fixed array indices
@@ -467,21 +484,46 @@ class Cable(object):
         self.fy = self.FreeDof[np.newaxis, :]
 
     def initial_position(self):
-        # compute parabola for inital configuration    
-        x = np.array([0, 22.5, 45])
-        y = np.array([0, -self.SAG,  0])
+        # compute parabola for inital configuration
+        self.u = np.zeros((self.nDof))
+        # split the nodes in two mooring lines
+        split = np.split(self.NodeCoord, [len(self.NodeCoord)//2+1, len(self.NodeCoord)-(len(self.NodeCoord)//2)])
+        self.NodeCoordL, self.NodeCoordR = split[0], split[2]
+        
+
+        # left initial parabola
+        x = np.array([-self.R, -self.R/2, 0])
+        y = np.array([-self.anchor_depth, (self.anchor_depth+self.H)/2-self.SAG-self.anchor_depth,  self.H])
         A =np.zeros((3,3))
         for i, val in enumerate(x):
             A[i] = np.array([1,val, val**2])
         c, b, a =np.linalg.solve(A, y)
-        # array of Nodes
-        s = np.array([i[0] for i in self.NodeCoord])
+        # array of left Nodes
+        s = np.array([i[0] for i in self.NodeCoordL])
 
-        x = 45*((s-s[0])/(s[-1]-s[0]))+s[0] 
+        x = s*abs(-self.R + s[0])/abs(s[-1]-s[0]) -self.R
         y = a*x**2+b*x+c
-        self.u = np.zeros((self.nDof))
-        self.u[0:self.nDof+1:2] = x - np.array([i[0] for i in self.NodeCoord])
-        self.u[1:self.nDof+1:2] = y - np.array([i[1] for i in self.NodeCoord])
+        
+        self.u[0:self.nDof//2:2]   = x - np.array([i[0] for i in self.NodeCoordL])
+        self.u[1:self.nDof//2+1:2] = y - np.array([i[1] for i in self.NodeCoordL])
+
+        # right initial parabola
+        s = np.array([i[0] for i in self.NodeCoordR])
+
+        x = np.array([0, self.R/2, self.R])
+        y = np.array([self.H, (self.H+self.anchor_depth)/2-self.anchor_depth-self.SAG, -self.anchor_depth])
+        
+        A =np.zeros((3,3))
+        for i, val in enumerate(x):
+            A[i] = np.array([1,val, val**2])
+        c, b, a =np.linalg.solve(A, y)
+        
+        
+        
+        x = self.R*((s-s[0])/(s[-1]-s[0]))
+        y = a*x**2+b*x+c
+        self.u[self.nDof//2+1::2] = x - np.array([i[0] for i in self.NodeCoordR])
+        self.u[self.nDof//2+2::2] = y - np.array([i[1] for i in self.NodeCoordR])
 
     def plot_cable(self, Iter = None):
         # plot the initial guess
@@ -492,12 +534,12 @@ class Cable(object):
             DofsLeft = 2*NodeLeft 
             DofsRight = 2*NodeRight
             plt.plot([self.NodeCoord[NodeLeft][0] + self.u[DofsLeft], self.NodeCoord[NodeRight][0] + self.u[DofsRight]], 
-                        [self.NodeCoord[NodeLeft][1] + self.u[DofsLeft + 1], self.NodeCoord[NodeRight][1] + self.u[DofsRight + 1]], '-ok')
-            plt.plot([self.NodeCoord[NodeLeft][0], self.NodeCoord[NodeRight][0]], [self.NodeCoord[NodeLeft][1], self.NodeCoord[NodeRight][1]], 'g')
+                        [self.NodeCoord[NodeLeft][1] + self.u[DofsLeft + 1], self.NodeCoord[NodeRight][1] + self.u[DofsRight + 1]], '-k')
+            
                 
         # plot the supports
-        plt.plot([0, self.D], [0, 0], 'vr')
-        plt.axis('equal')
+        self.plot_supports() 
+        plt.hlines(0, -self.R*1.1, self.R*1.1, color= 'brown')
         plt.xlabel("x [m]")
         plt.ylabel("y [m]")
         if Iter:
@@ -515,24 +557,29 @@ class Cable(object):
             Pelem = -self.g*l0*m/2                           # Half weight to each node
             self.Pext[DofsLeft + 1] += Pelem
             self.Pext[DofsRight + 1] += Pelem
+        # external reaction force of pipe:
+        self.Pext[self.nDof//2+1] = self.Fd
             
     def static_solver(self):
         CONV = 0
         PLOT = False
-        kIter = 0
+        self.kIter = 0
         self.TENSION = np.zeros((self.nElem))
         
         while CONV == 0:
-            kIter += 1
-            print("Iteration: "+str(kIter)+" ...\n")
+            self.kIter += 1
+            if self.kIter % 100 ==0:
+                print("Iteration: "+str(self.kIter)+" ...\n")
             # Check stability - define a number of maximum iterations. If solution
             # hasn't converged, check what is going wrong (if something).
-            if kIter > self.nMaxIter:
+            if self.kIter > self.nMaxIter:
                 break
             
             # Assemble vector with internal forces and stiffnes matrix
             K = np.zeros((self.nDof*self.nDof)) 
             Fi = np.zeros((self.nDof))
+            Fsoil = np.zeros((self.nDof))
+            
             for iElem in np.arange(0, self.nElem):
                 NodeLeft = int(self.Element[iElem, 0])
                 NodeRight = int(self.Element[iElem, 1])
@@ -542,6 +589,10 @@ class Cable(object):
                 EA = self.Element[iElem, 3]
                 NodePos = ([self.NodeCoord[NodeLeft][0] + self.u[DofsLeft], self.NodeCoord[NodeRight][0] + self.u[DofsRight]], 
                             [self.NodeCoord[NodeLeft][1] + self.u[DofsLeft + 1], self.NodeCoord[NodeRight][1] + self.u[DofsRight + 1]])
+                if NodePos[1][0] < 0 :
+                    Fsoil[DofsLeft] = -NodePos[1][0] * self.ksoil
+                if NodePos[1][1] < 0 and Fsoil[DofsRight] == 0:
+                    Fsoil[DofsRight] = (-NodePos[1][1]) * self.ksoil
                 Fi_elem, K_elem, Tension, WARN = StringForcesAndStiffness(NodePos, EA, l0, self.TENSION_ONLY)
                 self.TENSION[iElem] = Tension
         
@@ -564,8 +615,10 @@ class Cable(object):
         
             K = K.reshape((self.nDof, self.nDof))
         
+            
             # Calculate residual forces
-            R = self.Pext - Fi
+            
+            R = self.Pext+Fsoil - Fi
         
             # Check for convergence
             if np.linalg.norm(R[self.FreeDof])/np.linalg.norm(self.Pext[self.FreeDof]) < 1e-3:
@@ -583,21 +636,31 @@ class Cable(object):
         
             # Update displacement of nodes
             self.u += du
-        
+            
             # plot the updated configuration
-            if PLOT:
-                self.plot_cable(Iter = kIter)
+            if PLOT :
+                print(Fsoil)
+                self.plot_cable(Iter = self.kIter)
         
         if CONV == 1:
-            print("Converged solution at iteration: "+str(kIter))
-            self.plot_cable(Iter = kIter)
+            print("Converged solution at iteration: "+str(self.kIter))
+            #self.plot_cable(Iter = self.kIter)
+            # store solution
+            self.store_solution()
+            
         else:
             print("Solution did not converge")
         
-
+        
+    def store_solution(self):
+        self.sol = np.zeros((self.NodeCoord.T.shape))
+        self.sol[0] = self.NodeCoord.T[0] + self.u[::2]
+        self.sol[1] = self.NodeCoord.T[1] + self.u[1::2]
+    
     def plot_tension(self):
         plt.figure()
         X = (np.array([i[0] for i in self.NodeCoord[0:-1]]) + np.array([i[0] for i in self.NodeCoord[1:]]))/2
+        print(X)
         plt.plot(X, self.TENSION)
         plt.title("Tension")
         plt.xlabel("x [m]")

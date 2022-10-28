@@ -20,24 +20,15 @@ from matplotlib import pyplot as plt
 
 # %%
 
-fig, ax = plt.subplots(2, 3, figsize = (30, 15))
-karr = [0, 50, 300]
-sagarr = [10, 15, 40]
-print(ax.shape)
-for i in range(3):
-    ml = Cable()
-    ml.ksoil = karr[i]
-    ml.SAG = sagarr[i]
-    ml.static_solver()
-    try:
-        ax[0, i].plot(ml.sol[0], ml.sol[1], color = 'black')
-    except AttributeError:
-        print("No attribute sol")
-    ax[0, i].hlines(0, -ml.R*1.1, ml.R*1.1, color= 'brown')
-    ax[0, i].set_title(f"Solution after {ml.kIter} iterations and ksoil = {karr[i]} N/m")
-    ax[0, i].set_xlabel("x [m]")
-    ax[0, i].set_ylabel("y [m]")
-    ax[1, i].plot(ml.TENSION)
-    ax[1, i].set_title("Tension")
-    ax[1, i].set_xlabel("x [m]")
-    ax[1, i].set_ylabel("T [N]")
+ml = Cable()
+ml.static_solver()
+ml.plot_cable()
+
+x = np.linspace(0, 15, 100)
+z = -5.128063249*np.cosh(0.1950053951*x - 2.345617545) + 7.013369948
+
+plt.plot(x, -z,linewidth = 3, linestyle='dashed', color = 'mediumturquoise' ,label = 'Analytical solution')
+plt.plot(-x, -z,linewidth = 3,linestyle='dashed',color = 'mediumturquoise')
+plt.legend()
+
+plt.savefig("analytical solution.jpg")

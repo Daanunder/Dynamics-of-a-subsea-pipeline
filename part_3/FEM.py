@@ -28,7 +28,7 @@ class ContinousBeam(object):
 
         # Input parameters
         self.R = 0.5                       # [m] radius of pipe
-        self.thickness = 0.020              # [m] wall thickness
+        self.thickness = 0.01              # [m] wall thickness
         
         # cross-sectional properites
         self.A = 2*np.pi*self.R*self.thickness
@@ -47,21 +47,18 @@ class ContinousBeam(object):
         # Define load parameters
         self.f0 = 2                          # [Hz]
         self.A0 = 0.1                        # [m]
-        self.T0 = 10000
+        self.T0 = 800000
         
         # irregular forcing parameters
         self.apply_irregular_forcing = True
-        self.Hm0 = 4 #m
-        self.Tp = 20 #s
-        self.CD = 0.7 #-
+        self.Hm0 = 6 #m
+        self.Tp = 12 #s
+        self.CD = 0.07 #-
         self.ship_mass = 60e6 #kg
         self.ship_area = 6000  #m2
         self.rho_water = 1000 #kg/m3
-        #self.Hm0_range = [4, 8, 10, 12]
-        #self.Tp_range = [6, 8, 10, 12]
-        # (Hm0, Tp) pairs
-        #self.wave_characteristics = [(4, 6), (4, 8), (4, 10), (6, 6), (6, 8), (6, 10), (8, 6), (8, 8), (8, 10), (10, 8), (10, 10), (10, 12)
-        self.wave_characteristics = [(4,10), (4,12), (6, 12), (6, 14), (8, 12), (8, 14), (8, 16), (10, 14), (10, 16), (12, 16), (16, 18)]
+        #self.wave_characteristics = [(4,10), (4,12), (6, 12), (6, 14), (8, 12), (8, 14), (8, 16), (10, 14), (10, 16), (12, 16), (16, 18)]
+        self.wave_characteristics = [(4,10),(6, 12)] #,(8, 14),(12, 16),(16, 18)]
         self.K_ship = 10e8
 
         # Define output time vector
@@ -69,13 +66,13 @@ class ContinousBeam(object):
 
         # Define node coordinates
         self.N_nodes = 100
-        self.n_modes = 20
-
+        self.n_modes = 10
 
         # Modal analysis
         self.plot_n_modes = 5
         self.modal_damping_ratio = 0.05
-        
+       
+        # Setup secondary parameters
         self.setup_system()
         
     
@@ -98,7 +95,18 @@ class ContinousBeam(object):
         # steel yield strenght = 355
         self.max_curvature = 355*10**6 / (self.E * self.R)
         self.max_drift = 1000.0 
-        self.max_elongation = 355*10**6 / self.E
+        self.max_strain = 355*10**6 / self.E
+        self.max_bending_stress = 355*10**6
+        self.max_normal_stress = 355*10**6
+        self.max_total_stress = 355*10**6
+
+        # workability plots
+        self.plot_curvature_treshold = False
+        self.plot_drift_treshold = False
+        self.plot_strain_treshold = False
+        self.plot_bending_stress_treshold = False
+        self.plot_normal_stress_treshold = False
+        self.plot_total_stress_treshold = False
 
 
         # setup node coordinates 
@@ -234,6 +242,7 @@ class ContinousBeam(object):
 
         self.K_FF = K_FF
         self.M_FP = M_FP
+        self.K_FP = K_FP
 
         return M_FF, K_FF
 
@@ -337,7 +346,6 @@ class ContinousBeam(object):
         plt.title(title)
 
     def setup_decoupled_system(self):
-        # TODO: make number of modes dynamic
         # Compute Modal quantities and decouple the system
         self.contributing_modes = slice(self.first_mode, min(self.n_modes+self.first_mode, self.max_modes))
         self.PHI = self.eigen_vectors[:,self.contributing_modes]
@@ -367,17 +375,22 @@ class ContinousBeam(object):
             return Fequ
         else:
             # prescribe acceleration by dividing force over ship mass
-            A = np.zeros(len(self.prescribed_dofs))
+            U = np.zeros(len(self.prescribed_dofs))
+            UDD = np.zeros(len(self.prescribed_dofs))
             force_index = np.argwhere(self.T >= t)[0][0]
-            A[0] = self.irregular_forcing[0][force_index] * self.K_ship
-            A[1] = self.irregular_forcing[1][force_index] / self.ship_mass
-            F =  - self.M_FP.T @ A 
+            U[0] = self.irregular_forcing[0][force_index] * self.K_ship
+            UDD[1] = self.irregular_forcing[1][force_index] / self.ship_mass
+            F = -self.K_FP.T @ U - self.M_FP.T @ UDD
             return self.PHI.T @ F
 
     # update function
     def qdot(self, t, q):
         if np.round(t % 1000) < 5 and t > 1000:
-            print("Time :",t, "Percentage :" , np.round(t/self.T[-1] * 100), end="\r")
+            p = t/self.T[-1]
+            d = datetime.datetime.now() - self.simulation_starttime 
+            r = d.total_seconds()/p
+            time_to_go = datetime.timedelta(seconds=(1-p)*r)
+            print("Time :",t, "\t Percentage :" , np.round(p*100) , "\t Estimated time left: " , time_to_go, end="\r")
         Um = q[0:self.n_modes]                                 # first entries are the displacemnt
         Vm = q[self.n_modes:2*self.n_modes]                           # second half is the velocity
         Am = ( self.get_forcing(t) - (self.Km * Um + self.Cm * Vm) ) / self.Mm      # compute the accelerations
@@ -385,7 +398,7 @@ class ContinousBeam(object):
 
     # solving in time domain
     def get_solution_FEM(self):
-        starttime = datetime.datetime.now()
+        self.simulation_starttime = datetime.datetime.now()
         self.solution = scipy.integrate.solve_ivp(fun=self.qdot,y0=self.q0,t_span=[self.T[0],self.T[-1]])
 
         self.computed_time = self.solution.t
@@ -401,11 +414,14 @@ class ContinousBeam(object):
         self.x_displacements = self.displacements[0::3]
         self.y_displacements = self.displacements[1::3]
         self.theta_displacements = self.displacements[2::3]
-        self.curvature_displacements = np.diff(self.theta_displacements, axis=0)*np.pi/180/(2*self.dx)
-        self.elongation = np.diff(self.x_displacements, axis=0)
-        self.normal_stress = self.elongation*self.E
-        self.bending_stress = self.curvature_displacements*self.E*self.R
-        self.total_stress = self.bending_stress + self.normal_stress
+
+        self.curvature = np.diff(self.theta_displacements, axis=0)*np.pi/180/(2*self.dx)
+        self.strain = np.diff(self.x_displacements, axis=0)
+        
+        ## Stresses in N/m2
+        self.normal_stress = self.strain*self.E /10**6
+        self.bending_stress = self.curvature*self.E*self.R /10**6
+        self.total_stress = self.bending_stress + self.normal_stress /10**6
         
         # velocity solution from modal to spatial domain
         self.velocities = np.array([self.PHI @ self.solution.y[self.n_modes:, t] for t in range(len(self.computed_time))]).T
@@ -413,39 +429,37 @@ class ContinousBeam(object):
         self.y_velocities = self.velocities[1::3]
         self.theta_velocities = self.velocities[2::3]
         
-        duration = datetime.datetime.now() - starttime
+        duration = datetime.datetime.now() - self.simulation_starttime
         print()
-        print(f'Solving done, took me: {duration} seconds')
+        print(f'Solving done, took me: {duration} hh:mm:ss')
         
-    def plot_maximum_beam_displacement(self, fig=None, ax=None, ls="-"):
-        save = False
-        if not fig:
-            save = True
-            fig, ax = plt.subplots(2,3, figsize=(20, 12))
-        
+    def plot_maximum_beam_displacement(self, fig=None, ax=None, ls="-", label=None):
         ## Assume steady state is beyond half of the computation time
         mask = self.computed_time > self.T[-1]/2
         extra_index = len(mask) - np.count_nonzero(mask)
 
-        curvature_timestep = max(np.abs(self.curvature_displacements[:,mask]).argmax(axis=1)) + extra_index
+        self.plot_curvature_treshold = np.abs(self.curvature).max() > self.max_curvature if not self.plot_curvature_treshold else True
+        self.plot_drift_treshold = np.abs(self.y_displacements).max() > self.max_drift if not self.plot_drift_treshold else True
+        self.plot_strain_treshold = np.abs(self.strain).max() > self.max_strain if not self.plot_strain_treshold else True
+
+        curvature_timestep = max(np.abs(self.curvature[:,mask]).argmax(axis=1)) + extra_index
         y_timestep = max(np.abs(self.y_displacements[:,mask]).argmax(axis=1)) + extra_index
-        elongation_timestep = max(np.abs(self.elongation[:,mask]).argmax(axis=1)) + extra_index
+        strain_timestep = max(np.abs(self.strain[:,mask]).argmax(axis=1)) + extra_index
 
-        curvature_node = max(np.abs(self.curvature_displacements[:,mask]).argmax(axis=0))
+        curvature_node = max(np.abs(self.curvature[:,mask]).argmax(axis=0))
         y_node = max(np.abs(self.y_displacements[:,mask]).argmax(axis=0))
-        elongation_node = max(np.abs(self.elongation[:,mask]).argmax(axis=0))
+        strain_node = max(np.abs(self.strain[:,mask]).argmax(axis=0))
 
-        curvature1 = self.curvature_displacements[:, curvature_timestep]
+        curvature1 = self.curvature[:, curvature_timestep]
         y1 = self.y_displacements[:, y_timestep]
-        elongation1 = self.elongation[:, elongation_timestep]
+        strain1 = self.strain[:, strain_timestep]
 
-        curvature2 = self.curvature_displacements[curvature_node, :]
+        curvature2 = self.curvature[curvature_node, :]
         y2 = self.y_displacements[y_node, :]
-        elongation2 = self.elongation[elongation_node, :]
+        strain2 = self.strain[strain_node, :]
 
         a = ax[0,0]
-        a.plot(np.linspace(self.top_cable, self.base_cable, self.N_nodes-1), curvature1, label=f"{self.Hm0} - {self.Tp}", ls=ls)
-        handles, labels = a.get_legend_handles_labels()
+        a.plot(np.linspace(self.top_cable, self.base_cable, self.N_nodes-1), curvature1, label=label, ls=ls)
         a.set_title(f"Maximum curvature occuring at t={np.round(self.computed_time[curvature_timestep],2)}s")
         a.set_xlabel('Beam length [m]')
         a.set_ylabel('Curvature [deg/m]')
@@ -459,10 +473,10 @@ class ContinousBeam(object):
         a.grid()
 
         a = ax[0,2]
-        a.plot(np.linspace(self.top_cable, self.base_cable, self.N_nodes-1), elongation1, ls=ls)
-        a.set_title(f"Maximum elongation occuring at t={np.round(self.computed_time[elongation_timestep],2)}s")
+        a.plot(np.linspace(self.top_cable, self.base_cable, self.N_nodes-1), strain1, ls=ls)
+        a.set_title(f"Maximum strain occuring at t={np.round(self.computed_time[strain_timestep],2)}s")
         a.set_xlabel('Beam length [m]')
-        a.set_ylabel('Elongation [m/m]')
+        a.set_ylabel('Strain [m/m]')
         a.grid()
 
         a = ax[1,0]
@@ -480,33 +494,84 @@ class ContinousBeam(object):
         a.grid()
 
         a = ax[1,2]
-        a.plot(self.computed_time, elongation2, ls=ls)
-        a.set_title(f"Elongation occuring at element {elongation_node} over time")
+        a.plot(self.computed_time, strain2, ls=ls)
+        a.set_title(f"Strain occuring at element {strain_node} over time")
         a.set_xlabel('Time [s]')
-        a.set_ylabel('Elongation [m/m]')
+        a.set_ylabel('Strain [m/m]')
         a.grid()
-       
-        if save:
-            fig.suptitle(f"Workability for the steady state (t > 500000s), with maximum curvature: {self.max_curvature:.2f}, maximum perpendicular drift: {self.max_drift:.2f} and maximum elongation {self.max_elongation:.2f}")
-            fig.legend(handles, labels, title="Hm0 - Tp")
-            plt.savefig("system_response_irregular_forcing.png")
-            plt.cla()
-        return handles, labels
 
-    def get_system_response_irregular_forcing(self, wave_characteristics=None):
+    def plot_stresses(self, fig, ax, ls="-", label=None):
+        ## Assume steady state is beyond half of the computation time
+        mask = self.computed_time > self.T[-1]/2
+        extra_index = len(mask) - np.count_nonzero(mask)
+
+        self.plot_bending_stress_treshold = np.abs(self.bending_stress).max() > self.max_bending_stress if not self.plot_bending_stress_treshold else True
+        self.plot_normal_stress_treshold = np.abs(self.normal_stress).max() > self.max_normal_stress if not self.plot_normal_stress_treshold else True
+        self.plot_total_stress_treshold = np.abs(self.total_stress).max() > self.max_total_stress if not self.plot_total_stress_treshold else True
+
+        bending_stress_timestep = max(np.abs(self.bending_stress[:,mask]).argmax(axis=1)) + extra_index
+        normal_stress_timestep = max(np.abs(self.normal_stress[:,mask]).argmax(axis=1)) + extra_index
+        total_stress_timestep = max(np.abs(self.total_stress[:,mask]).argmax(axis=1)) + extra_index
+
+        bending_stress_node = max(np.abs(self.bending_stress[:,mask]).argmax(axis=0))
+        normal_stress_node = max(np.abs(self.normal_stress[:,mask]).argmax(axis=0))
+        total_stress_node = max(np.abs(self.total_stress[:,mask]).argmax(axis=0))
+
+        bending_stress1 = self.bending_stress[:, bending_stress_timestep]
+        normal_stress1 = self.normal_stress[:, normal_stress_timestep]
+        total_stress1 = self.total_stress[:, total_stress_timestep]
+
+        bending_stress2 = self.bending_stress[bending_stress_node, :]
+        normal_stress2 = self.normal_stress[normal_stress_node, :]
+        total_stress2 = self.total_stress[total_stress_node, :]
+
+        a = ax[0,0]
+        a.plot(np.linspace(self.top_cable, self.base_cable, self.N_nodes-1), bending_stress1, label=label, ls=ls)
+        a.set_title(f"Maximum bending stress occuring at t={np.round(self.computed_time[bending_stress_timestep],2)}s")
+        a.set_xlabel('Beam length [m]')
+        a.set_ylabel('Bending stress [Pa]')
+        a.grid()
+        a = ax[0,1]
+        a.plot(np.linspace(self.top_cable, self.base_cable, self.N_nodes-1), normal_stress1, ls=ls)
+        a.set_title(f"Maximum normal stress occuring at t={np.round(self.computed_time[normal_stress_timestep],2)}s")
+        a.set_xlabel('Beam length [m]')
+        a.set_ylabel('Normal stress [Pa]')
+        a.grid()
+        a = ax[0,2]
+        a.plot(np.linspace(self.top_cable, self.base_cable, self.N_nodes-1), total_stress1, ls=ls)
+        a.set_title(f"Maximum total stress occuring at t={np.round(self.computed_time[total_stress_timestep],2)}s")
+        a.set_xlabel('Beam length [m]')
+        a.set_ylabel('Total stress [Pa]')
+        a.grid()
+
+
+        a = ax[1,0]
+        a.plot(self.computed_time, bending_stress2, ls=ls)
+        a.set_title(f"Bending stress occuring at element {bending_stress_node} over time")
+        a.set_xlabel('Time [s]')
+        a.set_ylabel('Bending stress [Pa]')
+        a.grid()
+        a = ax[1,1]
+        a.plot(self.computed_time, normal_stress2, ls=ls)
+        a.set_title(f"Normal stress occuring at element {normal_stress_node} over time")
+        a.set_xlabel('Time [s]')
+        a.set_ylabel('Normal stress [Pa]')
+        a.grid()
+        a = ax[1,2]
+        a.plot(self.computed_time, total_stress2, ls=ls)
+        a.set_title(f"Total stress occuring at element {total_stress_node} over time")
+        a.set_xlabel('Time [s]')
+        a.set_ylabel('Total stress [Pa]')
+        a.grid()
+
+    def get_system_response_irregular_forcing(self, wave_characteristics=None, renew_figure=False):
         if not wave_characteristics:
             wave_characteristics = self.wave_characteristics
+        
+        if renew_figure:
+            self.fig, self.ax = plt.subplots(2,3, figsize=(20, 14))
+            self.fig2, self.ax2 = plt.subplots(2,3, figsize=(20, 14))
 
-        fig, ax = plt.subplots(2,3, figsize=(20, 14))
-        #ax[0,0].hlines([self.max_curvature, -self.max_curvature], self.base_cable, self.top_cable)
-        #ax[1,0].hlines([self.max_curvature, -self.max_curvature], self.T[0], self.T[-1])
-        ax[0,1].hlines([self.max_drift, -self.max_drift], self.base_cable, self.top_cable)
-        ax[1,1].hlines([self.max_drift, -self.max_drift], self.T[0], self.T[-1])
-        #ax[0,2].hlines([self.max_elongation, -self.max_elongation], self.base_cable, self.top_cable)
-        #ax[1,2].hlines([self.max_elongation, -self.max_elongation], self.T[0], self.T[-1])
-
-        all_handles = []
-        all_labels = []
         line_styles = ["-", "--", "-.", ":"]
         for i, (Hm0, Tp) in enumerate(wave_characteristics):
             ls = line_styles[i % 4]
@@ -516,19 +581,76 @@ class ContinousBeam(object):
             self.Tp = float(Tp)
             self.setup_system()
             self.get_solution_FEM()
-            handles, labels = self.plot_maximum_beam_displacement(fig, ax, ls)
-            all_handles.extend(handles)
-            all_labels.extend(labels)
+            label = f"{self.Hm0} - {self.Tp}"
+            self.plot_maximum_beam_displacement(self.fig, self.ax, ls, label= label)
+            self.plot_stresses(self.fig2, self.ax2, ls)
+            
             print("=================")
 
-        fig.suptitle(f"Workability for the steady state (t > 500000s), with maximum curvature: {self.max_curvature:.2}, maximum perpendicular drift: {self.max_drift:.2} and maximum elongation {self.max_elongation:.2}", fontsize=16)
-        fig.legend(handles, labels, title="Hm0 - Tp")
+        if self.plot_curvature_treshold:
+            self.ax[0,0].hlines([self.mself.ax_curvature, -self.mself.ax_curvature], self.base_cable, self.top_cable)
+            self.ax[1,0].hlines([self.mself.ax_curvature, -self.mself.ax_curvature], self.T[0], self.T[-1])
+        if self.plot_drift_treshold:
+            self.ax[0,1].hlines([self.mself.ax_drift, -self.mself.ax_drift], self.base_cable, self.top_cable)
+            self.ax[1,1].hlines([self.mself.ax_drift, -self.mself.ax_drift], self.T[0], self.T[-1])
+        if self.plot_strain_treshold:
+            self.ax[0,2].hlines([self.mself.ax_strain, -self.mself.ax_strain], self.base_cable, self.top_cable)
+            self.ax[1,2].hlines([self.mself.ax_strain, -self.mself.ax_strain], self.T[0], self.T[-1])
+
+        if self.plot_bending_stress_treshold:
+            self.ax2[0,0].hlines([self.mself.ax_bending_stress, -self.mself.ax_bending_stress], self.base_cable, self.top_cable)
+            self.ax2[1,0].hlines([self.mself.ax_bending_stress, -self.mself.ax_bending_stress], self.T[0], self.T[-1])
+        if self.plot_normal_stress_treshold:
+            self.ax2[0,1].hlines([self.mself.ax_normal_stress, -self.mself.ax_normal_stress], self.base_cable, self.top_cable)
+            self.ax2[1,1].hlines([self.mself.ax_normal_stress, -self.mself.ax_normal_stress], self.T[0], self.T[-1])
+        if self.plot_total_stress_treshold:
+            self.ax2[0,0].hlines([self.mself.ax_total_stress, -self.mself.ax_total_stress], self.base_cable, self.top_cable)
+            self.ax2[1,0].hlines([self.mself.ax_total_stress, -self.mself.ax_total_stress], self.T[0], self.T[-1])
+
+        handles, labels = self.ax[0,0].get_legend_handles_labels()
+
+        self.fig.suptitle(f"Workability for the steady state (t > 500000s), with maximum curvature: {self.max_curvature:.2}, maximum perpendicular drift: {self.max_drift:.2} and maximum strain {self.max_strain:.2}", fontsize=16)
+        self.fig.legend(handles, labels, title="Hm0 - Tp")
         #plt.tight_layout()
-        plt.savefig("system_response_irregular_forcing.png")
+        self.fig.savefig("system_response_irregular_forcing.png")
 
+        self.fig2.suptitle(f"Stress occuring for different loading conditions, where the maximum stress is defined as 355 Pa", fontsize=16)
+        self.fig2.legend(handles, labels, title="Hm0 - Tp")
+        #plt.tight_layout()
+        self.fig2.savefig("stress_response_irregular_forcing.png")
+   
+    def get_spatial_convergence(self):
+        phase_mask = self.forcing_t >= self.Tp/4
+        amplitude_time_series = get_irregular_forcing(self.Hm0, self.Tp, self.forcing_t)[0][phase_mask]
+        flow_velocity_time_series = 1/2*self.rho_water*(self.omega_waves*self.amplitude_time_series)**2*self.CD*self.ship_area
+        irregular_forcing = [self.amplitude_time_series, self.flow_velocity_time_series]
+        #n_nodes_range = [100, 100, 200, 200, 300, 300, 400, 400]
+        #n_modes_range = [10, 50, 20, 100, 30, 150, 40, 200]
+        #n_nodes_range = np.arange(100, 1000, 100)
+        #n_modes_range = [10]*len(n_nodes_range)
+        n_nodes_range = [800, 900]*2
+        n_modes_range = [80, 90, 10, 10]
 
-        return fig, ax
+        fig, ax = plt.subplots(2,3, figsize=(20, 14))
+        
+        for nodes, modes in zip(n_nodes_range, n_modes_range):
+            print("=================")
+            print(f"Running spatial convergence, Nodes: {nodes} - Modes: {modes}")
+            self.N_nodes = nodes
+            self.n_modes = modes
+            self.setup_system()
+            self.irregular_forcing = irregular_forcing
+            self.get_solution_FEM()
+            label = f'{nodes}-{modes}'
+            self.plot_maximum_beam_displacement(fig, ax, label=label)
+            print("=================")
+        
+        handles, labels = ax[0,0].get_legend_handles_labels()
 
+        fig.suptitle(f"System response for different number of nodes and different number of included modes", fontsize=16)
+        fig.legend(handles, labels, title="N_nodes - N_modes")
+        #plt.tight_layout()
+        fig.savefig("spatial_convergence_plot.png")
     
     def get_frequency_convergence(self, dx_range_start, dx_range_stop):
         mode_list = [1,2,3,4,5]
